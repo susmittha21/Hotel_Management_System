@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guest Directory &amp; Registration | VS PLAZA PMS</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <div class="pms-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="pms-sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">VS</div>
+        <div class="brand-text">
+          <h2>VS PLAZA</h2>
+          <span>Property Management</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Front Office</div>
+        <a href="dashboard.html" class="nav-item">
+          <span class="icon">&#9632;</span>
+          <span>Dashboard</span>
+        </a>
+        <a href="rooms.html" class="nav-item">
+          <span class="icon">&#9632;</span>
+          <span>Room Status</span>
+        </a>
+        <a href="bookings.html" class="nav-item">
+          <span class="icon">&#9632;</span>
+          <span>Reservations</span>
+        </a>
+        <a href="guests.html" class="nav-item active">
+          <span class="icon">&#9632;</span>
+          <span>Guest Directory</span>
+        </a>
+
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="shift-info">
+          <div class="user-avatar">FD</div>
+          <div class="user-meta">
+            <div class="user-name">Front Desk</div>
+            <div class="user-role">Morning Shift</div>
+          </div>
+        </div>
+        <button class="btn-logout">Sign Out</button>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="pms-main">
+      <header class="pms-topbar">
+        <div class="topbar-left">
+          <button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button>
+          <div class="page-headline">
+            <h1>Guest Directory &amp; Profiles</h1>
+            <p>Customer identification, contact database &amp; stay logs</p>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <button class="btn-quick-action" onclick="openModal('newGuestModal')">
+            + Register New Guest
+          </button>
+        </div>
+      </header>
+
+      <div class="page-content">
+        <!-- Search & Metric Bar -->
+        <div class="card-panel" style="margin-bottom: 16px;">
+          <div class="card-panel-body" style="padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div class="search-input-wrap" style="min-width: 320px;">
+              <span class="search-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
+              <input type="text" id="guestSearchInput" class="form-control" placeholder="Search by Name, Guest ID, Phone, City, ID Number...">
+            </div>
+
+            <span class="badge badge-secondary" id="guestCountBadge">0 Guests</span>
+          </div>
+        </div>
+
+        <!-- Guest Directory Table -->
+        <div class="card-panel">
+          <div class="card-panel-body" style="padding: 0;">
+            <div class="table-responsive">
+              <table class="pms-table">
+                <thead>
+                  <tr>
+                    <th>Guest ID</th>
+                    <th>Full Name</th>
+                    <th>Phone Contact</th>
+                    <th>City / Location</th>
+                    <th>ID Document</th>
+                    <th>Guest Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="guestTableBody">
+                  <!-- Populated dynamically via guests.js -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Register New Guest Modal -->
+  <div class="modal-backdrop" id="newGuestModal">
+    <div class="modal-dialog" style="max-width: 640px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Register Guest Profile</h3>
+        <button class="modal-close" onclick="closeModal('newGuestModal')">&times;</button>
+      </div>
+      <form id="newGuestForm">
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label" for="guestFirstName">First Name *</label>
+              <input type="text" id="guestFirstName" class="form-control" required placeholder="e.g. Rahul">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestLastName">Last Name *</label>
+              <input type="text" id="guestLastName" class="form-control" required placeholder="e.g. Verma">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestGender">Gender</label>
+              <select id="guestGender" class="form-control">
+                <option value="Male" selected>Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestDob">Date of Birth</label>
+              <input type="date" id="guestDob" class="form-control">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestPhone">Phone Number *</label>
+              <input type="tel" id="guestPhone" class="form-control" required placeholder="+91 98765 43210">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestEmail">Email Address</label>
+              <input type="email" id="guestEmail" class="form-control" placeholder="guest@example.com">
+            </div>
+
+            <div class="form-group full-width">
+              <label class="form-label" for="guestAddress">Street Address</label>
+              <input type="text" id="guestAddress" class="form-control" placeholder="e.g. 14 MG Road">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestCity">City *</label>
+              <input type="text" id="guestCity" class="form-control" required placeholder="e.g. Bengaluru">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestState">State</label>
+              <input type="text" id="guestState" class="form-control" placeholder="e.g. Karnataka">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestCountry">Country</label>
+              <input type="text" id="guestCountry" class="form-control" value="India">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestIdType">Govt ID Type *</label>
+              <select id="guestIdType" class="form-control" required>
+                <option value="Passport">Passport</option>
+                <option value="National ID" selected>National ID / Aadhaar</option>
+                <option value="Driving License">Driving License</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="guestIdNumber">ID Document Number *</label>
+              <input type="text" id="guestIdNumber" class="form-control" required placeholder="e.g. XXXX-XXXX-1234">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('newGuestModal')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Guest Record</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Guest Profile & Stay History Modal -->
+  <div class="modal-backdrop" id="guestProfileModal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="profileGuestName">Guest Profile</h3>
+        <button class="modal-close" onclick="closeModal('guestProfileModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; padding:16px; margin-bottom:20px;">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; font-size:0.82rem;">
+            <div>
+              <span style="color:#64748b; font-size:0.72rem; text-transform:uppercase;">Phone:</span>
+              <div id="profilePhone" style="font-weight:600;">-</div>
+            </div>
+            <div>
+              <span style="color:#64748b; font-size:0.72rem; text-transform:uppercase;">Email:</span>
+              <div id="profileEmail" style="font-weight:600;">-</div>
+            </div>
+            <div>
+              <span style="color:#64748b; font-size:0.72rem; text-transform:uppercase;">Gender &amp; DOB:</span>
+              <div id="profileGenderDob" style="font-weight:600;">-</div>
+            </div>
+            <div>
+              <span style="color:#64748b; font-size:0.72rem; text-transform:uppercase;">Address:</span>
+              <div id="profileAddress" style="font-weight:600;">-</div>
+            </div>
+            <div>
+              <span style="color:#64748b; font-size:0.72rem; text-transform:uppercase;">ID Proof:</span>
+              <div id="profileIdDoc" style="font-weight:600;">-</div>
+            </div>
+            <div>
+              <span style="color:#64748b; font-size:0.72rem; text-transform:uppercase;">Status:</span>
+              <div id="profileStatusBadge" style="font-weight:600;">-</div>
+            </div>
+          </div>
+        </div>
+
+        <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; color: var(--text-main);">
+          Stay History &amp; Bookings
+        </h4>
+        <div id="profileStayHistory">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('guestProfileModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/guests.js"></script>
+</body>
+</html>

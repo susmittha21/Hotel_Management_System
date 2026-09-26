@@ -1,0 +1,348 @@
+/* ==========================================================================
+   VS PLAZA - PUBLIC HOTEL LANDING PAGE
+   Simple, informational hotel website — not a SaaS marketing page
+   ========================================================================== */
+
+.landing-body {
+  background: #ffffff;
+  color: #1a202c;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Navigation */
+.landing-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 12px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.landing-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.landing-brand-logo {
+  width: 36px;
+  height: 36px;
+  background: #2c5282;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  color: #ffffff;
+}
+
+.landing-brand-text h1 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a202c;
+}
+
+.landing-brand-text span {
+  font-size: 10px;
+  color: #718096;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 600;
+  display: block;
+}
+
+.landing-menu {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.landing-link {
+  color: #4a5568;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.landing-link:hover {
+  color: #1a202c;
+}
+
+.btn-portal-login {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: #2c5282;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 12px;
+  border-radius: 4px;
+  text-decoration: none;
+  border: none;
+}
+
+.btn-portal-login:hover {
+  background: #2b6cb0;
+  text-decoration: none;
+}
+
+/* Hero */
+.landing-hero {
+  padding: 60px 32px 50px;
+  max-width: 900px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.hero-tag {
+  display: inline-block;
+  padding: 4px 12px;
+  background: #ebf4ff;
+  border: 1px solid #bee3f8;
+  border-radius: 2px;
+  color: #2c5282;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.landing-hero h2 {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #1a202c;
+  margin-bottom: 12px;
+}
+
+.landing-hero h2 span {
+  color: #2c5282;
+}
+
+.landing-hero p {
+  font-size: 14px;
+  color: #718096;
+  max-width: 600px;
+  margin: 0 auto 24px;
+  line-height: 1.6;
+}
+
+.hero-cta-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-hero-primary {
+  padding: 8px 20px;
+  background: #2c5282;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+.btn-hero-primary:hover {
+  background: #2b6cb0;
+  text-decoration: none;
+}
+
+.btn-hero-secondary {
+  padding: 8px 20px;
+  background: #ffffff;
+  color: #4a5568;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 4px;
+  text-decoration: none;
+  border: 1px solid #e2e8f0;
+}
+
+.btn-hero-secondary:hover {
+  background: #f7fafc;
+  text-decoration: none;
+}
+
+/* Quick Booking Bar */
+.quick-booking-bar {
+  background: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 20px;
+  max-width: 960px;
+  margin: 0 auto 40px;
+}
+
+.quick-bar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) auto;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.quick-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quick-field label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #718096;
+  font-weight: 600;
+}
+
+.quick-field input, .quick-field select {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  color: #1a202c;
+  padding: 7px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.quick-field input:focus, .quick-field select:focus {
+  border-color: #2c5282;
+}
+
+/* Room Cards Section */
+.landing-section {
+  padding: 40px 32px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.section-head {
+  margin-bottom: 24px;
+}
+
+.section-head h3 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a202c;
+  margin-bottom: 4px;
+}
+
+.section-head p {
+  color: #718096;
+  font-size: 13px;
+}
+
+.landing-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.landing-room-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.landing-room-card:hover {
+  border-color: #cbd5e0;
+}
+
+.room-visual {
+  height: 180px;
+  background: #edf2f7;
+  position: relative;
+  overflow: hidden;
+}
+
+.room-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.room-visual-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: #2c5282;
+  padding: 2px 8px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.room-details {
+  padding: 14px;
+}
+
+.room-details h4 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a202c;
+  margin-bottom: 4px;
+}
+
+.room-details p {
+  font-size: 12px;
+  color: #718096;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.room-specs {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: #4a5568;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.room-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.room-tariff {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a202c;
+}
+
+.room-tariff span {
+  font-size: 11px;
+  color: #718096;
+  font-weight: 400;
+}
+
+/* Footer */
+.landing-footer {
+  margin-top: auto;
+  border-top: 1px solid #e2e8f0;
+  background: #f7fafc;
+  padding: 20px 32px;
+  text-align: center;
+  color: #718096;
+  font-size: 12px;
+}
