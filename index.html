@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VS Plaza Hotel &amp; Suites</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/landing.css">
+</head>
+<body class="landing-body">
+
+  <nav class="landing-nav">
+    <a href="index.html" class="landing-brand">
+      <div class="landing-brand-logo">VS</div>
+      <div class="landing-brand-text">
+        <h1>VS PLAZA</h1>
+        <span>Hotel &amp; Suites</span>
+      </div>
+    </a>
+
+    <div class="landing-menu">
+      <a href="#rooms" class="landing-link">Rooms &amp; Rates</a>
+      <a href="pages/login.html" class="btn-portal-login">Staff Login</a>
+    </div>
+  </nav>
+
+  <header class="landing-hero">
+    <h2>Welcome to <span>VS Plaza</span><br>Hotel &amp; Suites</h2>
+    <p>Located in the heart of the city, VS Plaza offers comfortable rooms, quality dining, and professional service for business and leisure travelers.</p>
+    
+    <div class="hero-cta-group">
+      <a href="#rooms" class="btn-hero-primary">View Room Rates</a>
+      <a href="pages/login.html" class="btn-hero-secondary">Staff Portal &rarr;</a>
+    </div>
+  </header>
+
+  <div class="quick-booking-bar">
+    <form class="quick-bar-grid" onsubmit="event.preventDefault(); window.location.href='pages/login.html';">
+      <div class="quick-field">
+        <label>Check-In</label>
+        <input type="date" value="2026-09-26">
+      </div>
+      <div class="quick-field">
+        <label>Check-Out</label>
+        <input type="date" value="2026-09-29">
+      </div>
+      <div class="quick-field">
+        <label>Room Type</label>
+        <select>
+          <option value="all">All Types</option>
+          <option value="deluxe">Deluxe — ₹4,500/night</option>
+          <option value="suite">Suite — ₹8,500/night</option>
+          <option value="standard">Standard — ₹2,500/night</option>
+        </select>
+      </div>
+      <div class="quick-field">
+        <label>Guests</label>
+        <select>
+          <option value="1">1 Adult</option>
+          <option value="2" selected>2 Adults</option>
+          <option value="3">3 Adults</option>
+        </select>
+      </div>
+      <div>
+        <button type="submit" class="btn btn-primary" style="height: 34px; padding: 0 18px; width: 100%;">
+          Check Availability
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <section class="landing-section" id="rooms">
+    <div class="section-head">
+      <h3>Rooms &amp; Suites</h3>
+      <p>Choose from our range of well-appointed rooms to suit your stay requirements.</p>
+    </div>
+
+    <div class="landing-cards-grid">
+      <div class="landing-room-card">
+        <div class="room-visual">
+          <img src="https://images.unsplash.com/photo-1618773928121-c32242e63f39?auto=format&fit=crop&w=800&q=80" alt="Deluxe King Room" loading="lazy">
+          <div class="room-visual-badge">Popular</div>
+        </div>
+        <div class="room-details">
+          <h4>Deluxe King Room</h4>
+          <p>King-sized bed, work desk, high-speed Wi-Fi, city view. Complimentary breakfast for two.</p>
+          <div class="room-specs">
+            <span>Max 2 Guests</span>
+            <span>420 sq ft</span>
+            <span>Breakfast Incl.</span>
+          </div>
+          <div class="room-footer-row">
+            <div class="room-tariff">₹4,500 <span>/ night</span></div>
+            <a href="pages/login.html" class="btn btn-sm btn-primary">Reserve</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="landing-room-card">
+        <div class="room-visual">
+          <img src="https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?auto=format&fit=crop&w=800&q=80" alt="Executive Suite" loading="lazy">
+          <div class="room-visual-badge" style="background: #d69e2e;">Premium</div>
+        </div>
+        <div class="room-details">
+          <h4>Executive Suite</h4>
+          <p>Separate living area, master bedroom, Jacuzzi bath, mini bar, and 24/7 room service.</p>
+          <div class="room-specs">
+            <span>Max 4 Guests</span>
+            <span>850 sq ft</span>
+            <span>Lounge Access</span>
+          </div>
+          <div class="room-footer-row">
+            <div class="room-tariff">₹8,500 <span>/ night</span></div>
+            <a href="pages/login.html" class="btn btn-sm btn-primary">Reserve</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="landing-room-card">
+        <div class="room-visual">
+          <img src="https://images.unsplash.com/photo-1566665797739-1674de7a421a?auto=format&fit=crop&w=800&q=80" alt="Standard Room" loading="lazy">
+        </div>
+        <div class="room-details">
+          <h4>Standard Room</h4>
+          <p>Comfortable double bed, smart TV, Wi-Fi, and ergonomic work area for business stays.</p>
+          <div class="room-specs">
+            <span>Max 2 Guests</span>
+            <span>310 sq ft</span>
+            <span>Wi-Fi Included</span>
+          </div>
+          <div class="room-footer-row">
+            <div class="room-tariff">₹2,500 <span>/ night</span></div>
+            <a href="pages/login.html" class="btn btn-sm btn-primary">Reserve</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="landing-footer">
+    <div style="max-width: 1000px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+      <div>
+        <strong>VS Plaza Hotel &amp; Suites</strong> &bull; DBMS Academic Project
+      </div>
+      <div>
+        <a href="pages/login.html" style="color: #2c5282; font-weight: 600;">Staff Management Portal &rarr;</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

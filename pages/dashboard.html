@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard | VS Plaza PMS</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+  <div class="pms-layout">
+    <aside class="pms-sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">VS</div>
+        <div class="brand-text">
+          <h2>VS PLAZA</h2>
+          <span>Property Management</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Front Office</div>
+        <a href="dashboard.html" class="nav-item active">
+          <span class="icon">&#9632;</span>
+          <span>Dashboard</span>
+        </a>
+        <a href="rooms.html" class="nav-item">
+          <span class="icon">&#9632;</span>
+          <span>Room Status</span>
+        </a>
+        <a href="bookings.html" class="nav-item">
+          <span class="icon">&#9632;</span>
+          <span>Reservations</span>
+        </a>
+        <a href="guests.html" class="nav-item">
+          <span class="icon">&#9632;</span>
+          <span>Guest Directory</span>
+        </a>
+
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="shift-info">
+          <div class="user-avatar">FD</div>
+          <div class="user-meta">
+            <div class="user-name">Front Desk</div>
+            <div class="user-role">Morning Shift</div>
+          </div>
+        </div>
+        <button class="btn-logout">Sign Out</button>
+      </div>
+    </aside>
+
+    <main class="pms-main">
+      <header class="pms-topbar">
+        <div class="topbar-left">
+          <button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button>
+          <div class="page-headline">
+            <h1>Front Desk Dashboard</h1>
+            <p>Property operations overview</p>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="live-clock-badge">
+            <span class="live-pulse"></span>
+            <span id="liveClock">--</span>
+          </div>
+          <a href="bookings.html" class="btn-quick-action">+ New Reservation</a>
+        </div>
+      </header>
+
+      <div class="page-content">
+        <!-- KPI Cards -->
+        <section class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-meta">
+              <h3>Occupancy Rate</h3>
+              <div class="stat-number" id="metricOccupancyRate">0%</div>
+              <div class="stat-sub">Current property occupancy</div>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-meta">
+              <h3>Occupied Rooms</h3>
+              <div class="stat-number" id="metricOccupiedRooms">0 / 0</div>
+              <div class="stat-sub">Active in-house guests</div>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-meta">
+              <h3>Available</h3>
+              <div class="stat-number" id="metricAvailableRooms">0</div>
+              <div class="stat-sub positive">Ready for check-in</div>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-meta">
+              <h3>Expected Arrivals</h3>
+              <div class="stat-number" id="metricArrivals">0</div>
+              <div class="stat-sub">Pending check-in</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Two Column Layout -->
+        <div style="display: grid; grid-template-columns: 5fr 2fr; gap: 16px;">
+          <!-- Left: Arrivals & Departures -->
+          <div>
+            <div class="card-panel">
+              <div class="card-panel-header">
+                <div class="card-panel-title">Today's Arrivals</div>
+                <a href="bookings.html" class="btn btn-sm btn-secondary">All Reservations &rarr;</a>
+              </div>
+              <div class="card-panel-body" style="padding: 0;">
+                <div class="table-responsive">
+                  <table class="pms-table">
+                    <thead>
+                      <tr>
+                        <th>Booking #</th>
+                        <th>Guest</th>
+                        <th>Room</th>
+                        <th>Check-In</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="arrivalsTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="card-panel">
+              <div class="card-panel-header">
+                <div class="card-panel-title">Scheduled Departures</div>
+              </div>
+              <div class="card-panel-body" style="padding: 0;">
+                <div class="table-responsive">
+                  <table class="pms-table">
+                    <thead>
+                      <tr>
+                        <th>Booking #</th>
+                        <th>Guest</th>
+                        <th>Room</th>
+                        <th>Check-Out</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="departuresTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Vacancy & Shortcuts -->
+          <div>
+            <div class="card-panel">
+              <div class="card-panel-header">
+                <div class="card-panel-title">Vacancy by Type</div>
+              </div>
+              <div class="card-panel-body" id="roomTypeSummaryList"></div>
+            </div>
+
+            <div class="card-panel">
+              <div class="card-panel-header">
+                <div class="card-panel-title">Quick Actions</div>
+              </div>
+              <div class="card-panel-body" style="display: flex; flex-direction: column; gap: 6px;">
+                <a href="rooms.html" class="btn btn-secondary" style="justify-content: flex-start;">Room Status Board</a>
+                <a href="bookings.html" class="btn btn-secondary" style="justify-content: flex-start;">Walk-in Check-In</a>
+                <a href="guests.html" class="btn btn-secondary" style="justify-content: flex-start;">Search Guest Records</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="../js/app.js"></script>
+  <script src="../js/dashboard.js"></script>
+</body>
+</html>
