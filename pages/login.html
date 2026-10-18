@@ -113,10 +113,10 @@
         <div class="form-group" style="margin-bottom: 12px;">
           <label class="form-label" for="userRole">Role</label>
           <select id="userRole" class="form-control" required>
-            <option value="Front Desk Receptionist" selected>Front Desk Receptionist</option>
+            <option value="Front Desk" selected>Front Desk</option>
             <option value="Hotel Manager">Hotel Manager</option>
-            <option value="Night Auditor">Night Auditor</option>
-            <option value="Housekeeping Supervisor">Housekeeping Supervisor</option>
+            <option value="Operations Staff">Operations Staff</option>
+            <option value="Accounts Cashier">Accounts Cashier</option>
           </select>
         </div>
 
@@ -164,7 +164,13 @@
 
       showToast('Login successful', 'success');
       setTimeout(() => {
-        window.location.href = 'dashboard.html';
+        const startPage = {
+          'Hotel Manager': 'dashboard',
+          'Front Desk': 'dashboard',
+          'Operations Staff': 'housekeeping',
+          'Accounts Cashier': 'invoices'
+        }[role];
+        window.location.href = `${startPage}.html`;
       }, 300);
     }
   </script>

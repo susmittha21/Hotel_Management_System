@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maintenance | VS Plaza PMS</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="pms-layout">
+    <aside class="pms-sidebar" id="sidebar">
+      <div class="sidebar-brand"><div class="brand-icon">VS</div><div class="brand-text"><h2>VS PLAZA</h2><span>Property Management</span></div></div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Front Office</div>
+        <a href="dashboard.html" class="nav-item"><span class="icon">&#9632;</span><span>Dashboard</span></a>
+        <a href="rooms.html" class="nav-item"><span class="icon">&#9632;</span><span>Room Status</span></a>
+        <a href="bookings.html" class="nav-item"><span class="icon">&#9632;</span><span>Reservations</span></a>
+        <a href="guests.html" class="nav-item"><span class="icon">&#9632;</span><span>Guest Directory</span></a>
+        <a href="staff.html" class="nav-item"><span class="icon">&#9632;</span><span>Staff Directory</span></a>
+        <a href="housekeeping.html" class="nav-item"><span class="icon">&#9632;</span><span>Housekeeping</span></a>
+        <a href="maintenance.html" class="nav-item active"><span class="icon">&#9632;</span><span>Maintenance</span></a>
+        <a href="invoices.html" class="nav-item"><span class="icon">&#9632;</span><span>Invoices</span></a>
+        <a href="food.html" class="nav-item"><span class="icon">&#9632;</span><span>Food &amp; Orders</span></a>
+        <a href="services.html" class="nav-item"><span class="icon">&#9632;</span><span>Hotel Services</span></a>
+        <a href="reviews.html" class="nav-item"><span class="icon">&#9632;</span><span>Guest Reviews</span></a>
+      </nav>
+      <div class="sidebar-footer"><div class="shift-info"><div class="user-avatar">MT</div><div class="user-meta"><div class="user-name">Maintenance</div><div class="user-role">Engineering</div></div></div><button class="btn-logout">Sign Out</button></div>
+    </aside>
+
+    <main class="pms-main">
+      <header class="pms-topbar">
+        <div class="topbar-left"><button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button><div class="page-headline"><h1>Maintenance Desk</h1><p>Issue tracking and room repair management</p></div></div>
+        <div class="topbar-right"><button class="btn-quick-action" onclick="openModal('newIssueModal')">+ Report Issue</button></div>
+      </header>
+
+      <div class="page-content">
+        <div class="card-panel">
+          <div class="card-panel-body" style="padding: 0;">
+            <div class="table-responsive">
+              <table class="pms-table">
+                <thead><tr><th>Issue ID</th><th>Room</th><th>Issue Type</th><th>Priority</th><th>Assigned To</th><th>Status</th><th>Action</th></tr></thead>
+                <tbody id="maintenanceTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="newIssueModal">
+    <div class="modal-dialog">
+      <div class="modal-header"><h3 class="modal-title">Report Room Issue</h3><button class="modal-close" onclick="closeModal('newIssueModal')">&times;</button></div>
+      <form id="newIssueForm">
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-group"><label class="form-label" for="issueRoomNo">Room Number</label><input type="text" id="issueRoomNo" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="issueType">Issue Type</label><input type="text" id="issueType" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="issuePriority">Priority</label><select id="issuePriority" class="form-control"><option>Low</option><option selected>Medium</option><option>High</option><option>Critical</option></select></div>
+            <div class="form-group"><label class="form-label" for="issueStaff">Assigned Technician</label><input type="text" id="issueStaff" class="form-control" required></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('newIssueModal')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Issue</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="../js/app.js"></script>
+  <script src="../js/maintenance.js"></script>
+</body>
+</html>

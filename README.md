@@ -23,8 +23,12 @@ An enterprise-grade, realistic web-based Property Management System (PMS) built 
 ### Option 1: Using Local Development HTTP Server (Recommended)
 From the root workspace directory, start the built-in HTTP server:
 ```bash
-# Run a lightweight zero-config local web server from the project directory
-npx -y serve . -l 3000
+# Works on Windows PowerShell when execution policy blocks .ps1 scripts
+npm.cmd run dev
+```
+Or use the direct static server command:
+```bash
+npx.cmd -y serve . -l 3000
 ```
 Open your browser and navigate to:
 ```
@@ -34,10 +38,21 @@ http://localhost:3000
 ### Option 2: Direct File Execution (No Dependencies)
 Simply double-click [`index.html`](index.html) to open the public landing page in any web browser.
 
-### Default Staff Access Credentials
+### Backend Database Purpose
+This frontend is designed as a hotel operations UI for a real backend database system:
+- **PostgreSQL** stores structured business data such as guest records, room inventory, bookings, staff, invoices, payments, housekeeping tasks, and maintenance logs.
+- **MongoDB** stores flexible or document-heavy data such as room-service orders, audit logs, guest reviews, and operational metadata that do not fit a strict relational schema.
+- **Frontend responsibility**: collect user actions, render dashboard tables, and send API requests to backend endpoints. It does not manage business data directly in production.
+- **Typical API flow**: browser UI -> REST API -> PostgreSQL / MongoDB -> JSON response -> browser update.
+
+### Demo Login Details (Frontend Only)
 - **URL:** [`http://localhost:3000/pages/login.html`](pages/login.html)
-- **Username:** `admin` or `reception`
-- **Password:** `admin123`
+- If the server reports a different port because `3000` is already in use, replace `3000` with the port shown in the server output.
+- **Prefilled username:** `admin`
+- **Prefilled password:** `admin123`
+- **Role:** Select a role from the login form; role selection controls the demo module visibility.
+
+There are no separate staff accounts or role-specific passwords yet. This static frontend accepts any non-empty username and password, so `admin` / `admin123` are convenience demo values, not validated credentials. To try the cashier view, enter the demo values and select **Accounts Cashier**. The role-to-module mapping and each role's landing page are listed in the RBAC section below.
 
 ---
 
@@ -66,6 +81,8 @@ The system is architected to operate with a dual database backend:
 ```
 
 ### 1. PostgreSQL Relational Database Setup
+
+The SQL and MongoDB examples in this guide are database creation specifications for the planned backend. This repository does not currently include an API server, database connection, or database migration scripts.
 
 #### Step 1: Install & Create Database
 ```sql
@@ -291,81 +308,22 @@ db.audit_logs.insertOne({
 
 ## 👥 Role-Based Access Control (RBAC) Matrix
 
-What each administrative persona can view and do in the VS Plaza Hotel Management System:
+The frontend applies this module access matrix after login. The role selector is a demo identity switch, not account authentication. Access checks run in browser JavaScript and can be bypassed; enforce all permissions in a backend before using real guest or financial data.
 
-### 1. Front Desk Receptionist (`Role: Front Office`)
-- **Can View:**
-  - Real-time Front Desk Dashboard with daily occupancy rate, arrivals, departures, and available inventory.
-  - Room Status Board (which rooms are vacant, occupied, reserved, or under cleaning).
-  - Active and upcoming guest reservations.
-  - Guest directory KYC records (names, contact details, ID proofs).
-- **Can Do:**
-  - Create new walk-in or advance reservations.
-  - Check-in arriving guests (assign room key, auto-update room status to `Occupied`).
-  - Process scheduled departures and initiate checkout folios.
-  - Register new guest profiles with government ID verification.
-  - Update room status between `Available` and `Reserved`.
-- **Cannot Do:**
-  - Alter room base pricing or delete room inventory records.
-  - Access staff salary records or financial profit/loss statements.
-  - Delete audit logs or database tables.
+| Login role | Frontend modules available |
+| :--- | :--- |
+| Hotel Manager | All modules |
+| Front Desk | Dashboard, Room Status, Reservations, Guest Directory |
+| Operations Staff | Housekeeping, Maintenance, Food & Orders, Hotel Services, Guest Reviews |
+| Accounts Cashier | Invoices |
 
----
+These are demo module groups implemented by the frontend. Backend authorization must enforce the same access rules when a real API is added.
 
-### 2. Hotel General Manager / Administrator (`Role: Manager / Admin`)
-- **Can View:**
-  - **Everything** across the entire Property Management System.
-  - Property-wide revenue metrics, occupancy percentages, and RevPAR (Revenue Per Available Room).
-  - Staff rosters, payroll records, and department shift allocation.
-  - Full audit trails, database health, and system security logs.
-- **Can Do:**
-  - Add, edit, or decommission rooms and update base pricing per night.
-  - Override discounted rates, special booking arrangements, and cancellation fees.
-  - Manage employee user accounts, reset passwords, and assign system permissions.
-  - Generate weekly/monthly financial reports, tax summaries, and occupancy analytics.
-  - Execute database backups, data migrations, and schema syncs between PostgreSQL and MongoDB.
-
----
-
-### 3. Housekeeping Supervisor & Staff (`Role: Housekeeping`)
-- **Can View:**
-  - Real-time floor cleaning grid and room dirty/inspected matrix.
-  - List of rooms marked for checkout cleaning or stay-over service.
-  - Housekeeping supply inventory and task queue.
-- **Can Do:**
-  - Change room status from `Cleaning` to `Available` once sanitized and inspected.
-  - Flag rooms requiring maintenance repairs (e.g., plumbing, air-conditioning) to the maintenance queue.
-  - Mark daily cleaning checklists as completed.
-- **Cannot Do:**
-  - Access guest payment details, credit card info, or reservation rates.
-  - Manually check-in or check-out guests.
-
----
-
-### 4. Maintenance Engineer (`Role: Engineering`)
-- **Can View:**
-  - Maintenance ticketing board with priority filters (Low, Medium, High, Critical).
-  - Out-of-order room list (`Maintenance` status).
-- **Can Do:**
-  - Update ticket status (`Reported` → `In Progress` → `Resolved`).
-  - Change room status from `Maintenance` back to `Available` upon inspection.
-  - Log equipment replacement parts and repair notes.
-- **Cannot Do:**
-  - View guest identities, financial transactions, or billing folios.
-
----
-
-### 5. Accounts & Billing Cashier (`Role: Accounts`)
-- **Can View:**
-  - Billing ledger, guest folios, and pending room invoices.
-  - Daily cash register and digital payment settlements (UPI, Card, Net Banking).
-  - Tax reports (CGST & SGST calculations) and discount logs.
-- **Can Do:**
-  - Generate official PDF/printed tax invoices.
-  - Record payments and issue refund slips.
-  - Split folios between multiple guests or corporate accounts.
-- **Cannot Do:**
-  - Change room physical maintenance states or manage staff shifts.
+### Role summary
+- **Hotel Manager:** full access to every frontend module.
+- **Front Desk:** dashboard, rooms, bookings, and guest directory.
+- **Operations Staff:** housekeeping, maintenance, food orders, services, and reviews.
+- **Accounts Cashier:** invoices.
 
 ---
 

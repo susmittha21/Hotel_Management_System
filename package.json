@@ -1,0 +1,11 @@
+{
+  "name": "vs-plaza-hotel-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static hotel management frontend with PostgreSQL and MongoDB backend integration design.",
+  "scripts": {
+    "dev": "npx.cmd -y serve . -l 3000",
+    "start": "npx.cmd -y serve . -l 3000",
+    "serve": "python -m http.server 3000"
+  }
+}

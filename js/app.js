@@ -8,6 +8,15 @@ const STORAGE_KEYS = {
   BOOKINGS: 'vs_hotel_bookings',
   GUESTS: 'vs_hotel_guests',
   AUTH: 'vs_hotel_auth',
+  STAFF: 'vs_hotel_staff',
+  DEPARTMENTS: 'vs_hotel_departments',
+  HOUSEKEEPING: 'vs_hotel_housekeeping',
+  MAINTENANCE: 'vs_hotel_maintenance',
+  INVOICES: 'vs_hotel_invoices',
+  FOOD_MENU: 'vs_hotel_food_menu',
+  FOOD_ORDERS: 'vs_hotel_food_orders',
+  SERVICES: 'vs_hotel_services',
+  REVIEWS: 'vs_hotel_reviews',
 };
 
 // Default seed data matching the Course DBMS Relational Model
@@ -15,6 +24,44 @@ const STORAGE_KEYS = {
 const DEFAULT_ROOMS = [];
 const DEFAULT_GUESTS = [];
 const DEFAULT_BOOKINGS = [];
+const DEFAULT_STAFF = [];
+const DEFAULT_DEPARTMENTS = [
+  { departmentId: 'DEP-01', name: 'Front Office', description: 'Front desk, reservations, guest services' },
+  { departmentId: 'DEP-02', name: 'Housekeeping', description: 'Room cleaning and room readiness' },
+  { departmentId: 'DEP-03', name: 'Maintenance', description: 'Repair and room upkeep' },
+  { departmentId: 'DEP-04', name: 'Accounts', description: 'Billing and settlement' },
+  { departmentId: 'DEP-05', name: 'Food & Beverage', description: 'Dining and in-room orders' }
+];
+const DEFAULT_HOUSEKEEPING = [];
+const DEFAULT_MAINTENANCE = [];
+const DEFAULT_INVOICES = [];
+const DEFAULT_FOOD_MENU = [
+  { itemId: 'FD-01', name: 'Paneer Butter Masala', category: 'Main Course', price: 320 },
+  { itemId: 'FD-02', name: 'Veg Biryani', category: 'Main Course', price: 280 },
+  { itemId: 'FD-03', name: 'Butter Naan', category: 'Bread', price: 45 },
+  { itemId: 'FD-04', name: 'Fresh Lime Soda', category: 'Beverage', price: 70 }
+];
+const DEFAULT_FOOD_ORDERS = [];
+const DEFAULT_SERVICES = [
+  { serviceId: 'SV-01', name: 'Airport Pickup', price: 850, category: 'Transfer' },
+  { serviceId: 'SV-02', name: 'Laundry Service', price: 320, category: 'Housekeeping' },
+  { serviceId: 'SV-03', name: 'Spa Session', price: 1500, category: 'Wellness' }
+];
+const DEFAULT_REVIEWS = [];
+
+const ROLE_MODULES = {
+  'Hotel Manager': ['dashboard', 'rooms', 'bookings', 'guests', 'staff', 'housekeeping', 'maintenance', 'invoices', 'food', 'services', 'reviews'],
+  'Front Desk': ['dashboard', 'rooms', 'bookings', 'guests'],
+  'Operations Staff': ['housekeeping', 'maintenance', 'food', 'services', 'reviews'],
+  'Accounts Cashier': ['invoices']
+};
+
+const ROLE_HOME_MODULE = {
+  'Hotel Manager': 'dashboard',
+  'Front Desk': 'dashboard',
+  'Operations Staff': 'housekeeping',
+  'Accounts Cashier': 'invoices'
+};
 
 // Automatic cleanup of legacy demo records so database integration starts clean
 (function purgeLegacyDemoData() {
@@ -41,7 +88,6 @@ const HotelStore = {
     if (!data) return [];
     try {
       const parsed = JSON.parse(data);
-      // Auto-purge if old demo data is present
       if (parsed.length > 0 && parsed.some(r => r.currentGuest === 'Aarav Kumar' || r.roomNo === '101' && r.amenities && r.amenities.includes('High-Speed Wi-Fi, Mini Bar'))) {
         localStorage.setItem(STORAGE_KEYS.ROOMS, JSON.stringify([]));
         return [];
@@ -94,15 +140,124 @@ const HotelStore = {
     localStorage.setItem(STORAGE_KEYS.BOOKINGS, JSON.stringify(bookings));
   },
 
+  getDepartments() {
+    const data = localStorage.getItem(STORAGE_KEYS.DEPARTMENTS);
+    if (!data) {
+      localStorage.setItem(STORAGE_KEYS.DEPARTMENTS, JSON.stringify(DEFAULT_DEPARTMENTS));
+      return DEFAULT_DEPARTMENTS;
+    }
+    try { return JSON.parse(data); } catch { return DEFAULT_DEPARTMENTS; }
+  },
+
+  saveDepartments(departments) {
+    localStorage.setItem(STORAGE_KEYS.DEPARTMENTS, JSON.stringify(departments));
+  },
+
+  getStaff() {
+    const data = localStorage.getItem(STORAGE_KEYS.STAFF);
+    if (!data) return DEFAULT_STAFF;
+    try { return JSON.parse(data); } catch { return DEFAULT_STAFF; }
+  },
+
+  saveStaff(staff) {
+    localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(staff));
+  },
+
+  getHousekeeping() {
+    const data = localStorage.getItem(STORAGE_KEYS.HOUSEKEEPING);
+    if (!data) return DEFAULT_HOUSEKEEPING;
+    try { return JSON.parse(data); } catch { return DEFAULT_HOUSEKEEPING; }
+  },
+
+  saveHousekeeping(list) {
+    localStorage.setItem(STORAGE_KEYS.HOUSEKEEPING, JSON.stringify(list));
+  },
+
+  getMaintenance() {
+    const data = localStorage.getItem(STORAGE_KEYS.MAINTENANCE);
+    if (!data) return DEFAULT_MAINTENANCE;
+    try { return JSON.parse(data); } catch { return DEFAULT_MAINTENANCE; }
+  },
+
+  saveMaintenance(list) {
+    localStorage.setItem(STORAGE_KEYS.MAINTENANCE, JSON.stringify(list));
+  },
+
+  getInvoices() {
+    const data = localStorage.getItem(STORAGE_KEYS.INVOICES);
+    if (!data) return DEFAULT_INVOICES;
+    try { return JSON.parse(data); } catch { return DEFAULT_INVOICES; }
+  },
+
+  saveInvoices(invoices) {
+    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
+  },
+
+  getFoodMenu() {
+    const data = localStorage.getItem(STORAGE_KEYS.FOOD_MENU);
+    if (!data) {
+      localStorage.setItem(STORAGE_KEYS.FOOD_MENU, JSON.stringify(DEFAULT_FOOD_MENU));
+      return DEFAULT_FOOD_MENU;
+    }
+    try { return JSON.parse(data); } catch { return DEFAULT_FOOD_MENU; }
+  },
+
+  saveFoodMenu(menu) {
+    localStorage.setItem(STORAGE_KEYS.FOOD_MENU, JSON.stringify(menu));
+  },
+
+  getFoodOrders() {
+    const data = localStorage.getItem(STORAGE_KEYS.FOOD_ORDERS);
+    if (!data) return DEFAULT_FOOD_ORDERS;
+    try { return JSON.parse(data); } catch { return DEFAULT_FOOD_ORDERS; }
+  },
+
+  saveFoodOrders(orders) {
+    localStorage.setItem(STORAGE_KEYS.FOOD_ORDERS, JSON.stringify(orders));
+  },
+
+  getServices() {
+    const data = localStorage.getItem(STORAGE_KEYS.SERVICES);
+    if (!data) {
+      localStorage.setItem(STORAGE_KEYS.SERVICES, JSON.stringify(DEFAULT_SERVICES));
+      return DEFAULT_SERVICES;
+    }
+    try { return JSON.parse(data); } catch { return DEFAULT_SERVICES; }
+  },
+
+  saveServices(services) {
+    localStorage.setItem(STORAGE_KEYS.SERVICES, JSON.stringify(services));
+  },
+
+  getReviews() {
+    const data = localStorage.getItem(STORAGE_KEYS.REVIEWS);
+    if (!data) return DEFAULT_REVIEWS;
+    try { return JSON.parse(data); } catch { return DEFAULT_REVIEWS; }
+  },
+
+  saveReviews(reviews) {
+    localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
+  },
+
   clearAllData() {
     localStorage.setItem(STORAGE_KEYS.ROOMS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.GUESTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.BOOKINGS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.DEPARTMENTS, JSON.stringify(DEFAULT_DEPARTMENTS));
+    localStorage.setItem(STORAGE_KEYS.HOUSEKEEPING, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.MAINTENANCE, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.FOOD_MENU, JSON.stringify(DEFAULT_FOOD_MENU));
+    localStorage.setItem(STORAGE_KEYS.FOOD_ORDERS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.SERVICES, JSON.stringify(DEFAULT_SERVICES));
+    localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify([]));
   },
 
   getAuth() {
     const auth = localStorage.getItem(STORAGE_KEYS.AUTH);
-    return auth ? JSON.parse(auth) : { loggedIn: true, user: 'Admin / Reception', role: 'Front Desk Lead' };
+    if (!auth) return null;
+    try { return JSON.parse(auth); } catch { return null; }
   },
 
   setAuth(authData) {
@@ -111,7 +266,8 @@ const HotelStore = {
 
   logout() {
     localStorage.removeItem(STORAGE_KEYS.AUTH);
-    window.location.href = 'login.html';
+    const target = window.location.pathname.includes('/pages/') ? 'login.html' : 'pages/login.html';
+    window.location.href = target;
   }
 };
 
@@ -153,6 +309,34 @@ function closeModal(modalId) {
 
 // Global initialization for live clock and common triggers
 document.addEventListener('DOMContentLoaded', () => {
+  const pageName = window.location.pathname.split('/').pop().replace(/\.html$/, '');
+  if (pageName && pageName !== 'login' && pageName !== 'index') {
+    const auth = HotelStore.getAuth();
+    const allowedModules = auth && auth.loggedIn && ROLE_MODULES[auth.role];
+
+    if (!allowedModules) {
+      HotelStore.logout();
+      return;
+    }
+
+    if (!allowedModules.includes(pageName)) {
+      window.location.replace(`${ROLE_HOME_MODULE[auth.role]}.html`);
+      return;
+    }
+
+    document.querySelectorAll('.nav-item').forEach(link => {
+      const moduleName = link.getAttribute('href').replace(/\.html$/, '');
+      if (!allowedModules.includes(moduleName)) link.remove();
+    });
+
+    document.querySelectorAll('.user-name').forEach(element => {
+      element.textContent = auth.user;
+    });
+    document.querySelectorAll('.user-role').forEach(element => {
+      element.textContent = auth.role;
+    });
+  }
+
   // Live Clock Update
   const clockEl = document.getElementById('liveClock');
   if (clockEl) {
