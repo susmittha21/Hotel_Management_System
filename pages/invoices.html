@@ -38,7 +38,7 @@
           <div class="card-panel-body" style="padding: 0;">
             <div class="table-responsive">
               <table class="pms-table">
-                <thead><tr><th>Invoice ID</th><th>Guest</th><th>Booking</th><th>Room</th><th>Total</th><th>Status</th><th>Action</th></tr></thead>
+                <thead><tr><th>Invoice ID</th><th>Guest</th><th>Booking</th><th>Room</th><th>Subtotal</th><th>CGST</th><th>SGST</th><th>Total</th><th>Status</th><th>Action</th></tr></thead>
                 <tbody id="invoicesTableBody"></tbody>
               </table>
             </div>
@@ -54,10 +54,10 @@
       <form id="newInvoiceForm">
         <div class="modal-body">
           <div class="form-grid">
-            <div class="form-group"><label class="form-label" for="invoiceGuest">Guest Name</label><input type="text" id="invoiceGuest" class="form-control" required></div>
-            <div class="form-group"><label class="form-label" for="invoiceBooking">Booking ID</label><input type="text" id="invoiceBooking" class="form-control" required></div>
-            <div class="form-group"><label class="form-label" for="invoiceRoom">Room</label><input type="text" id="invoiceRoom" class="form-control" required></div>
-            <div class="form-group"><label class="form-label" for="invoiceTotal">Total Amount</label><input type="number" id="invoiceTotal" class="form-control" min="0" required></div>
+            <div class="form-group full-width"><label class="form-label" for="invoiceBooking">Booking</label><select id="invoiceBooking" class="form-control" required></select></div>
+            <div class="form-group full-width"><label class="form-label">Unbilled food orders for this guest</label><div id="invoiceFoodOrders" class="form-control" style="min-height:44px;"></div></div>
+            <div class="form-group full-width"><label class="form-label">Additional hotel services</label><div id="invoiceServices" class="form-control" style="min-height:44px;"></div></div>
+            <div class="form-group full-width"><div id="invoiceTaxHint" style="font-size:0.85rem;color:var(--text-muted);"></div></div>
           </div>
         </div>
         <div class="modal-footer">

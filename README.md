@@ -1,6 +1,6 @@
 # VS PLAZA Hotel Management System - Web Transition & DBMS Integration Guide
 
-An enterprise-grade, realistic web-based Property Management System (PMS) built with semantic HTML5, CSS3, and vanilla JavaScript. Designed specifically for academic DBMS evaluation, featuring dual-database architecture support (**PostgreSQL** relational 3NF and **MongoDB** document-based storage).
+An academic Property Management System (PMS) built with semantic HTML5, CSS3, vanilla JavaScript, FastAPI, and PostgreSQL. MongoDB remains optional design guidance and is not connected to the running app.
 
 ---
 
@@ -41,9 +41,9 @@ Simply double-click [`index.html`](index.html) to open the public landing page i
 ### Backend Database Purpose
 This frontend is designed as a hotel operations UI for a real backend database system:
 - **PostgreSQL** stores structured business data such as guest records, room inventory, bookings, staff, invoices, payments, housekeeping tasks, and maintenance logs.
-- **MongoDB** stores flexible or document-heavy data such as room-service orders, audit logs, guest reviews, and operational metadata that do not fit a strict relational schema.
+- **MongoDB** is not used by the current application; its later section is optional architecture guidance only.
 - **Frontend responsibility**: collect user actions, render dashboard tables, and send API requests to backend endpoints. It does not manage business data directly in production.
-- **Typical API flow**: browser UI -> REST API -> PostgreSQL / MongoDB -> JSON response -> browser update.
+- **Current API flow**: browser UI -> FastAPI -> PostgreSQL -> JSON response -> browser update.
 
 ### FastAPI and PostgreSQL Connection
 The FastAPI service reads and writes management records in PostgreSQL's relational tables. Rooms, guests, bookings, departments, staff, housekeeping, maintenance, invoices, and payments use the tables below. PostgreSQL also stores the food menu, food orders, hotel services, and reviews in relational tables that the API creates when first used. The API maps the frontend's camel-case records to relational rows and enforces the database's foreign-key and check constraints. Browser `localStorage` is only a cache; PostgreSQL is the source of truth.
@@ -57,26 +57,34 @@ The FastAPI service reads and writes management records in PostgreSQL's relation
    py -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
    ```
 3. Open `http://127.0.0.1:8000/api/health` to confirm the database connection. `http://127.0.0.1:8000/docs` lists the available API routes.
-4. Open `http://127.0.0.1:8000/docs` to inspect the API. `GET /api/data` reads all screen collections; `PUT /api/data/{collection}` transactionally saves a collection to its relational PostgreSQL tables. `GET /api/rooms` reads the normalized `ROOM` table. If the previous version created `pms_app_data`, the API imports its records into empty relational collections once and records that migration in `hotel_app_migrations`.
+4. Open `http://127.0.0.1:8000/docs` to inspect the API. `GET /api/data` reads role-authorized collections; `PUT /api/data/{collection}` transactionally saves allowed collections. Invoices are created and settled through dedicated API endpoints, and `GET /api/analytics` returns live dashboard metrics. If the previous version created `pms_app_data`, the API imports its records into empty relational collections once and records that migration in `hotel_app_migrations`.
 
 Run the frontend separately with `npm.cmd run dev` and open `http://localhost:3000`. PostgreSQL credentials remain on the backend and must never be placed in frontend JavaScript.
 
-For deployment, set backend `CORS_ORIGINS` to the exact HTTPS frontend origin and set `window.HOTEL_API_BASE_URL` to the deployed API URL ending in `/api` before `js/app.js` loads (or update the local default in `js/app.js`). Do not deploy real guest data publicly until server-side login and role authorization are implemented; the current login and role selector are demo-only.
+#### Staff login and permissions
 
-### Demo Login Details (Frontend Only)
+Set a unique username and password for each role in `.env`. Passwords must be at least 12 characters. Leave unused role pairs blank. Generate a session signing key in PowerShell with:
+
+```powershell
+py -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Copy the output to `PMS_SESSION_SECRET`. Keep all account credentials and the session key private and out of Git. The backend sets an HTTP-only session cookie and checks roles on API requests. Use the same `localhost` hostname for both local servers (the frontend is `http://localhost:3000`); this allows the local browser session cookie to work. For HTTPS deployments, set `PMS_COOKIE_SECURE=true`, configure `CORS_ORIGINS` to the exact frontend origin, and set `window.HOTEL_API_BASE_URL` to the deployed API URL ending in `/api`.
+
+#### Invoice calculation
+
+The invoice page calculates room charges from the booking tariff and nights, optionally adds the guest's unbilled food orders and selected services, then adds GST split equally into CGST and SGST. `PMS_GST_RATE` defaults to **5% for this project demo**; configure it to the rate required by your assignment. This configurable example is not tax advice and does not determine the legally applicable rate.
+
+### Staff Login
 - **URL:** [`http://localhost:3000/pages/login.html`](pages/login.html)
-- If the server reports a different port because `3000` is already in use, replace `3000` with the port shown in the server output.
-- **Prefilled username:** `admin`
-- **Prefilled password:** `admin123`
-- **Role:** Select a role from the login form; role selection controls the demo module visibility.
-
-There are no separate staff accounts or role-specific passwords yet. This static frontend accepts any non-empty username and password, so `admin` / `admin123` are convenience demo values, not validated credentials. To try the cashier view, enter the demo values and select **Accounts Cashier**. The role-to-module mapping and each role's landing page are listed in the RBAC section below.
+- Sign in with an account configured in `.env`. The role is assigned by the backend and cannot be selected in the form.
+- If the server reports a different frontend port because `3000` is in use, use that port and add its origin to backend `CORS_ORIGINS`.
 
 ---
 
 ## 🗄️ Dual DBMS Setup & Backend Integration (PostgreSQL & MongoDB)
 
-The system is architected to operate with a dual database backend:
+The following MongoDB material is a future design reference only. The current running app uses PostgreSQL exclusively:
 - **PostgreSQL**: Handles relational, ACID-compliant transactions (Guest Profiles, Room Inventory, Bookings, Check-In/Check-Out, Invoices, Staff).
 - **MongoDB**: Handles flexible, denormalized, and high-velocity document storage (Audit Logs, Real-time Folio Details, Restaurant Food Orders, Housekeeping Checklists, Guest Reviews).
 
@@ -302,7 +310,7 @@ db.audit_logs.insertOne({
 ## 🔍 ChatGPT ER & Schema Matching Verification
 
 ### How the UI relates to the ER design
-The table below maps the UI modules to the intended entities; it is not a claim that every listed workflow or relationship is complete. Current PostgreSQL persistence covers the management collections, but the demo login is not server-authenticated, checkout does not automatically calculate a folio, and analytics/reporting are not implemented.
+The table below maps the UI modules to the intended entities; it is not a claim that every listed workflow or relationship is complete. The current app has backend-configured login and role checks, invoice calculation, and dashboard analytics; MongoDB and some broader reporting workflows remain unimplemented.
 
 | Entity | Relational Model / Schema | Web App Implementation & UI Module | Scope |
 | :--- | :--- | :--- | :--- |
@@ -313,7 +321,7 @@ The table below maps the UI modules to the intended entities; it is not a claim 
 | **`CHECK_IN_OUT`** | `Stay_ID (PK)`, `Booking_ID (FK)`, `Actual_CheckIn`, `Actual_CheckOut` | Quick Check-in & Departure folios on [`dashboard.html`](dashboard.html) and [`bookings.html`](bookings.html) | UI concept |
 | **`PAYMENT`** | `Payment_ID (PK)`, `Booking_ID (FK)`, `Amount`, `Payment_Date`, `Payment_Method` | Invoice settlement captures Cash, Card, UPI, or Net Banking | UI concept |
 | **`INVOICE`** | `Invoice_ID (PK)`, `Booking_ID (FK)`, `Room_Charges`, `Tax_Amount`, `Discount`, `Total_Amount` | Invoice module stores totals and payment status | UI concept |
-| **`STAFF`** | `Staff_ID (PK)`, `First_Name`, `Phone`, `Department_ID (FK)`, `Job_Role_ID` | Staff directory; role-based navigation remains demo-only | UI concept |
+| **`STAFF`** | `Staff_ID (PK)`, `First_Name`, `Phone`, `Department_ID (FK)`, `Job_Role_ID` | Staff directory; login accounts and app roles are configured separately in backend `.env` | UI concept |
 | **`DEPARTMENT`** | `Department_ID (PK)`, `Department_Name`, `Description` | Front Office, Housekeeping, Maintenance, Accounts, Food & Beverage | UI concept |
 | **`HOUSEKEEPING`** | `Task_ID (PK)`, `Room_ID (FK)`, `Staff_ID (FK)`, `Task_Status` | Housekeeping task list and room turnover status | UI concept |
 | **`MAINTENANCE`** | `Issue_ID (PK)`, `Room_ID (FK)`, `Staff_ID (FK)`, `Issue_Type`, `Priority`, `Status` | Room maintenance tickets and status | UI concept |
@@ -326,7 +334,7 @@ The table below maps the UI modules to the intended entities; it is not a claim 
 
 ## 👥 Role-Based Access Control (RBAC) Matrix
 
-The frontend applies this module access matrix after login. The role selector is a demo identity switch, not account authentication. Access checks run in browser JavaScript and can be bypassed; enforce all permissions in a backend before using real guest or financial data.
+The backend authenticates accounts configured in `.env`, assigns each account its configured role, and enforces access to PostgreSQL API operations. The frontend hides modules that the signed-in role cannot use; the backend remains the authorization boundary.
 
 | Login role | Frontend modules available |
 | :--- | :--- |
@@ -335,7 +343,7 @@ The frontend applies this module access matrix after login. The role selector is
 | Operations Staff | Housekeeping, Maintenance, Food & Orders, Hotel Services, Guest Reviews |
 | Accounts Cashier | Invoices |
 
-These are demo module groups implemented by the frontend. The API currently has no authentication or authorization, so these role checks do not protect records; enforce the access rules on the backend before deployment with real guest or payment data.
+The backend enforces these module permissions on PostgreSQL API requests. Staff login accounts are configured through the backend `.env` file.
 
 ### Role summary
 - **Hotel Manager:** full access to every frontend module.
@@ -350,9 +358,9 @@ These are demo module groups implemented by the frontend. The API currently has 
 | Week | Milestone / Deliverable | Target System Modules | Database Implementation |
 | :--- | :--- | :--- | :--- |
 | **Week 1** | **UI/UX Foundation & Front-Desk Operations** | Public Landing Page, Staff Login, Operations Dashboard, Room Status Board, Reservations & Guest Directory | Pure clean client state ready for live DB connectors; Schema specifications matching ChatGPT ER model. |
-| **Week 2** | **Billing, Folio Management & Invoicing** | Checkout folio workflow, automated invoice calculator, GST tax breakdown (CGST + SGST), payment gateway simulation (Cash, Card, UPI) | **PostgreSQL**: `INVOICE` and `PAYMENT` relational tables.<br>**MongoDB**: Audit logs of financial transactions. |
+| **Week 2** | **Billing, Folio Management & Invoicing** | Invoice calculation, GST tax breakdown (CGST + SGST), and payment recording (Cash, Card, UPI) | **PostgreSQL**: `INVOICE` and `PAYMENT` relational tables. MongoDB audit logs remain a future idea. |
 | **Week 3** | **Housekeeping, Maintenance & Staff Roster** | Floor-by-floor cleaning board, maintenance issue ticketing, staff shift management, department directory | **PostgreSQL**: `STAFF`, `DEPARTMENT`, `HOUSEKEEPING`, `MAINTENANCE` tables with foreign key constraints. |
-| **Week 4** | **PostgreSQL Persistence and Operations** | Frontend collections, menu/order/review screens backed by the PostgreSQL API | PostgreSQL integration is implemented for current UI collections. MongoDB, occupancy/revenue analytics, and service usage are not implemented. |
+| **Week 4** | **PostgreSQL Persistence and Operations** | Frontend collections, menu/order/review screens, role-protected API, invoice calculation, and dashboard analytics | PostgreSQL integration is implemented for current UI collections. MongoDB and service usage are not implemented. |
 
 ---
 
@@ -361,4 +369,7 @@ These are demo module groups implemented by the frontend. The API currently has 
 - **PostgreSQL persistence:** The application loads and saves its relational collections using `GET /api/data` and `PUT /api/data/{collection}`. Writes are transactional, and PostgreSQL foreign keys and check constraints reject invalid relationships or values.
 - **Browser cache:** The frontend updates `localStorage` only after a successful database save. When a PostgreSQL collection is empty, the app may import its existing cached records once; PostgreSQL then becomes the source of truth.
 - **Additional PostgreSQL tables:** The API creates `food_menu`, `food_order`, and `hotel_service` on first use, and adds a stable external code to the existing `review` table. MongoDB is not required to run the current app.
+- **Authentication and authorization:** Accounts are configured on the backend by role; the browser receives an HTTP-only signed session cookie. API permissions are enforced server-side.
+- **Invoices:** The server computes room, food, and selected service charges, adds the configured GST percentage as equal CGST/SGST amounts, and records the invoice and line items in PostgreSQL.
+- **Dashboard analytics:** Occupancy, today's arrivals/departures, room availability, and today's recorded payment revenue are calculated from PostgreSQL.
 - **Payment recording:** Marking an invoice as paid asks for a supported payment method and writes a corresponding record to `PAYMENT`.

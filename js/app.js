@@ -63,7 +63,7 @@ const ROLE_HOME_MODULE = {
   'Accounts Cashier': 'invoices'
 };
 
-const API_BASE_URL = (window.HOTEL_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
+const API_BASE_URL = (window.HOTEL_API_BASE_URL || 'http://localhost:8000/api').replace(/\/+$/, '');
 const DATA_COLLECTIONS = {
   [STORAGE_KEYS.ROOMS]: 'rooms',
   [STORAGE_KEYS.GUESTS]: 'guests',
@@ -85,6 +85,7 @@ function saveCollectionToDatabase(storageKey, collection, records) {
   const write = previousWrite.catch(() => {}).then(async () => {
     const response = await fetch(`${API_BASE_URL}/data/${collection}`, {
       method: 'PUT',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(records)
     });
@@ -107,6 +108,22 @@ function saveCollectionToDatabase(storageKey, collection, records) {
       pendingCollectionWrites.delete(collection);
     }
   });
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    credentials: 'include',
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {})
+    }
+  });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result.detail || `Request failed (${response.status}).`);
+  }
+  return response.status === 204 ? null : response.json();
 }
 
 // Automatic cleanup of legacy demo records so database integration starts clean
@@ -133,17 +150,11 @@ const HotelStore = {
 
   initialize() {
     if (!this._databaseReady) {
-      this._databaseReady = fetch(`${API_BASE_URL}/data`)
-        .then(async response => {
-          if (!response.ok) {
-            const result = await response.json().catch(() => ({}));
-            throw new Error(result.detail || `Database request failed (${response.status}).`);
-          }
-          return response.json();
-        })
+      this._databaseReady = apiRequest('/data')
         .then(async data => {
           const legacyRecords = {};
           Object.entries(DATA_COLLECTIONS).forEach(([storageKey, collection]) => {
+            if (!Object.hasOwn(data, collection)) return;
             let existingRecords = [];
             try {
               const cached = JSON.parse(localStorage.getItem(storageKey) || '[]');
@@ -152,22 +163,24 @@ const HotelStore = {
               console.warn(`Ignoring invalid local cache for ${collection}.`, error);
             }
             const databaseRecords = data[collection] || [];
-            const records = databaseRecords.length ? databaseRecords : existingRecords;
+            const records = collection === 'invoices'
+              ? databaseRecords
+              : databaseRecords.length ? databaseRecords : existingRecords;
             localStorage.setItem(storageKey, JSON.stringify(records));
-            if (!databaseRecords.length && existingRecords.length) {
+            if (collection !== 'invoices' && !databaseRecords.length && existingRecords.length) {
               legacyRecords[collection] = { storageKey, records };
             }
           });
           const migrations = Object.entries(legacyRecords).map(([collection, dataSet]) =>
             saveCollectionToDatabase(dataSet.storageKey, collection, dataSet.records)
           );
-          if (!data.departments || data.departments.length === 0) {
+          if (Object.hasOwn(data, 'departments') && data.departments.length === 0) {
             if (!legacyRecords.departments) migrations.push(this.saveDepartments(DEFAULT_DEPARTMENTS));
           }
-          if (!data.food_menu || data.food_menu.length === 0) {
+          if (Object.hasOwn(data, 'food_menu') && data.food_menu.length === 0) {
             if (!legacyRecords.food_menu) migrations.push(this.saveFoodMenu(DEFAULT_FOOD_MENU));
           }
-          if (!data.services || data.services.length === 0) {
+          if (Object.hasOwn(data, 'services') && data.services.length === 0) {
             if (!legacyRecords.services) migrations.push(this.saveServices(DEFAULT_SERVICES));
           }
           const saves = await Promise.all(migrations);
@@ -293,6 +306,37 @@ const HotelStore = {
     return saveCollectionToDatabase(STORAGE_KEYS.INVOICES, 'invoices', invoices);
   },
 
+  async createInvoice(payload) {
+    const invoice = await apiRequest('/invoices', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    const invoices = this.getInvoices();
+    invoices.unshift(invoice);
+    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
+    return invoice;
+  },
+
+  async payInvoice(invoiceId, paymentMethod) {
+    const result = await apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/payment`, {
+      method: 'PUT',
+      body: JSON.stringify({ paymentMethod })
+    });
+    const invoices = this.getInvoices().map(invoice => invoice.invoiceId === invoiceId
+      ? { ...invoice, status: result.status, paymentMethod: result.paymentMethod }
+      : invoice);
+    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
+    return result;
+  },
+
+  getDashboardAnalytics() {
+    return apiRequest('/analytics');
+  },
+
+  getInvoiceOptions() {
+    return apiRequest('/invoice-options');
+  },
+
   getFoodMenu() {
     const data = localStorage.getItem(STORAGE_KEYS.FOOD_MENU);
     if (!data) {
@@ -364,7 +408,12 @@ const HotelStore = {
     localStorage.setItem(STORAGE_KEYS.AUTH, JSON.stringify(authData));
   },
 
-  logout() {
+  async logout() {
+    try {
+      await apiRequest('/auth/logout', { method: 'POST' });
+    } catch (error) {
+      console.warn('Unable to close the backend session.', error);
+    }
     localStorage.removeItem(STORAGE_KEYS.AUTH);
     const target = window.location.pathname.includes('/pages/') ? 'login.html' : 'pages/login.html';
     window.location.href = target;
@@ -408,11 +457,22 @@ function closeModal(modalId) {
 }
 
 // Global initialization for live clock and common triggers
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   const pageName = window.location.pathname.split('/').pop().replace(/\.html$/, '');
   if (pageName && pageName !== 'login' && pageName !== 'index') {
-    const auth = HotelStore.getAuth();
-    const allowedModules = auth && auth.loggedIn && ROLE_MODULES[auth.role];
+    let auth;
+    try {
+      const session = await apiRequest('/auth/me');
+      auth = { loggedIn: true, user: session.username, role: session.role };
+      HotelStore.setAuth(auth);
+    } catch (error) {
+      console.warn('A backend login is required to open this page.', error);
+      localStorage.removeItem(STORAGE_KEYS.AUTH);
+      const target = window.location.pathname.includes('/pages/') ? 'login.html' : 'pages/login.html';
+      window.location.replace(target);
+      return;
+    }
+    const allowedModules = ROLE_MODULES[auth.role];
 
     if (!allowedModules) {
       HotelStore.logout();
@@ -424,9 +484,11 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    document.querySelectorAll('.nav-item').forEach(link => {
-      const moduleName = link.getAttribute('href').replace(/\.html$/, '');
-      if (!allowedModules.includes(moduleName)) link.remove();
+    document.querySelectorAll('a[href$=".html"]').forEach(link => {
+      const moduleName = link.getAttribute('href').split('/').pop().replace(/\.html$/, '');
+      if (!allowedModules.includes(moduleName)) {
+        link.remove();
+      }
     });
 
     document.querySelectorAll('.user-name').forEach(element => {

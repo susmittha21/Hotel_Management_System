@@ -11,47 +11,47 @@ document.addEventListener('DOMContentLoaded', async () => {
     showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
     return;
   }
-  renderDashboardMetrics();
+  await refreshDashboardStats();
   renderArrivalsTable();
   renderDeparturesTable();
   renderQuickRoomStatus();
 });
 
-function renderDashboardMetrics() {
-  const rooms = HotelStore.getRooms();
-  const bookings = HotelStore.getBookings();
+let dashboardStats = null;
 
-  const totalRooms = rooms.length;
-  const occupiedCount = rooms.filter(r => r.status === 'Occupied').length;
-  const availableCount = rooms.filter(r => r.status === 'Available').length;
-  const cleaningCount = rooms.filter(r => r.status === 'Cleaning' || r.status === 'Maintenance').length;
-  const reservedCount = rooms.filter(r => r.status === 'Reserved').length;
+async function refreshDashboardStats() {
+  try {
+    dashboardStats = await HotelStore.getDashboardAnalytics();
+    renderDashboardMetrics(dashboardStats);
+    renderQuickRoomStatus();
+  } catch (error) {
+    console.error('Unable to load dashboard analytics from PostgreSQL.', error);
+    showToast(`Could not load dashboard analytics: ${error.message}`, 'error');
+  }
+}
 
-  const occupancyRate = Math.round((occupiedCount / (totalRooms || 1)) * 100);
-
-  // Set values on dashboard cards
+function renderDashboardMetrics(stats) {
   const elOccRate = document.getElementById('metricOccupancyRate');
   const elOccupied = document.getElementById('metricOccupiedRooms');
   const elAvailable = document.getElementById('metricAvailableRooms');
   const elArrivals = document.getElementById('metricArrivals');
   const elRevenue = document.getElementById('metricTodayRevenue');
 
-  if (elOccRate) elOccRate.textContent = `${occupancyRate}%`;
-  if (elOccupied) elOccupied.textContent = `${occupiedCount} / ${totalRooms}`;
-  if (elAvailable) elAvailable.textContent = availableCount;
-  if (elArrivals) elArrivals.textContent = bookings.filter(b => b.status === 'Confirmed').length;
-  if (elRevenue) {
-    const totalRev = bookings.reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
-    elRevenue.textContent = `₹${totalRev.toLocaleString('en-IN')}`;
-  }
+  if (elOccRate) elOccRate.textContent = `${stats.occupancyRate}%`;
+  if (elOccupied) elOccupied.textContent = `${stats.occupiedRooms} / ${stats.totalRooms}`;
+  if (elAvailable) elAvailable.textContent = stats.availableRooms;
+  if (elArrivals) elArrivals.textContent = stats.arrivalsToday;
+  if (elRevenue) elRevenue.textContent = `₹${Number(stats.revenueToday).toLocaleString('en-IN')}`;
 }
 
 function renderArrivalsTable() {
   const tableBody = document.getElementById('arrivalsTableBody');
   if (!tableBody) return;
 
-  const bookings = HotelStore.getBookings();
-  const arrivals = bookings.filter(b => b.status === 'Confirmed' || b.status === 'Checked-In');
+  const today = new Date().toLocaleDateString('sv-SE');
+  const arrivals = HotelStore.getBookings().filter(b =>
+    (b.status === 'Confirmed' || b.status === 'Checked-In') && b.checkIn === today
+  );
 
   if (arrivals.length === 0) {
     tableBody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No upcoming arrivals recorded for today.</td></tr>`;
@@ -83,7 +83,8 @@ function renderDeparturesTable() {
   const tableBody = document.getElementById('departuresTableBody');
   if (!tableBody) return;
 
-  const bookings = HotelStore.getBookings().filter(b => b.status === 'Checked-In');
+  const today = new Date().toLocaleDateString('sv-SE');
+  const bookings = HotelStore.getBookings().filter(b => b.status === 'Checked-In' && b.checkOut === today);
 
   if (bookings.length === 0) {
     tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding: 20px;">No scheduled check-outs today.</td></tr>`;
@@ -107,8 +108,8 @@ function renderQuickRoomStatus() {
   const summaryEl = document.getElementById('roomTypeSummaryList');
   if (!summaryEl) return;
 
-  const rooms = HotelStore.getRooms();
-  if (rooms.length === 0) {
+  const roomTypes = dashboardStats ? dashboardStats.roomTypes : [];
+  if (!roomTypes.length) {
     summaryEl.innerHTML = `
       <div style="padding: 18px 8px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
         No room inventory recorded.<br>
@@ -118,16 +119,14 @@ function renderQuickRoomStatus() {
     return;
   }
 
-  const types = ['Deluxe', 'Suite', 'Standard'];
-
-  summaryEl.innerHTML = types.map(t => {
-    const total = rooms.filter(r => r.type === t).length;
-    const avail = rooms.filter(r => r.type === t && r.status === 'Available').length;
+  summaryEl.innerHTML = roomTypes.map(roomType => {
+    const total = roomType.total;
+    const avail = roomType.available;
     const percent = Math.round((avail / (total || 1)) * 100);
     return `
       <div style="margin-bottom: 14px;">
         <div style="display:flex; justify-content:space-between; font-size:0.84rem; margin-bottom:4px;">
-          <span style="font-weight:600;">${t} Rooms</span>
+          <span style="font-weight:600;">${roomType.name} Rooms</span>
           <span style="color:var(--text-muted);">${avail} of ${total} vacant</span>
         </div>
         <div style="height:6px; background:#e2e8f0; border-radius:9999px; overflow:hidden;">
@@ -157,7 +156,7 @@ async function quickCheckIn(bookingId) {
   }
 
   showToast(`Guest ${booking.guestName} successfully checked into Room ${booking.roomNo}!`, 'success');
-  renderDashboardMetrics();
+  await refreshDashboardStats();
   renderArrivalsTable();
   renderDeparturesTable();
 }
@@ -180,7 +179,7 @@ async function quickCheckOut(bookingId, roomNo) {
   }
 
   showToast(`Folio finalized. Room ${roomNo} marked for Housekeeping.`, 'info');
-  renderDashboardMetrics();
+  await refreshDashboardStats();
   renderArrivalsTable();
   renderDeparturesTable();
   renderQuickRoomStatus();

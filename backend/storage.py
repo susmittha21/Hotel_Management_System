@@ -1,9 +1,11 @@
 import re
 from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
 from typing import Any
+from uuid import uuid4
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection
 
 
@@ -41,6 +43,18 @@ def ensure_extension_tables(connection: Connection, schema: str) -> None:
         )
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS "{schema}".invoice_line_item (
+            line_id BIGSERIAL PRIMARY KEY,
+            invoice_id VARCHAR(20) NOT NULL REFERENCES "{schema}".invoice(invoice_id) ON DELETE CASCADE,
+            item_type VARCHAR(20) NOT NULL CHECK (item_type IN ('Room', 'Food Order', 'Hotel Service')),
+            reference_code VARCHAR(40),
+            description VARCHAR(200) NOT NULL,
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            unit_price NUMERIC(10, 2) NOT NULL CHECK (unit_price >= 0),
+            line_total NUMERIC(10, 2) NOT NULL CHECK (line_total >= 0)
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS "{schema}".review (
             review_id SERIAL PRIMARY KEY,
             review_code VARCHAR(40),
@@ -59,6 +73,8 @@ def ensure_extension_tables(connection: Connection, schema: str) -> None:
         f'CREATE UNIQUE INDEX IF NOT EXISTS review_code_uq ON "{schema}".review (review_code)',
         f'ALTER TABLE "{schema}".payment ADD COLUMN IF NOT EXISTS invoice_id VARCHAR(20) '
         f'REFERENCES "{schema}".invoice(invoice_id) ON DELETE RESTRICT',
+        f'ALTER TABLE "{schema}".invoice ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC(10, 2) NOT NULL DEFAULT 0',
+        f'ALTER TABLE "{schema}".invoice ADD COLUMN IF NOT EXISTS sgst_amount NUMERIC(10, 2) NOT NULL DEFAULT 0',
         f'DROP INDEX IF EXISTS "{schema}".payment_invoice_id_uq',
         f'ALTER TABLE "{schema}".housekeeping ADD COLUMN IF NOT EXISTS task_code VARCHAR(40)',
         f'ALTER TABLE "{schema}".housekeeping ADD COLUMN IF NOT EXISTS assigned_staff_label VARCHAR(100)',
@@ -270,12 +286,17 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
             f"""
             SELECT i.invoice_id, i.booking_id, g.first_name || ' ' || g.last_name AS guest_name,
                    r.room_number, i.room_charges, i.service_charges, i.tax_amount,
-                   i.discount, i.total_amount, i.invoice_status, p.payment_method
+                   i.cgst_amount, i.sgst_amount, i.discount, i.total_amount,
+                   i.invoice_status, p.payment_method
             FROM "{schema}".invoice i
             LEFT JOIN "{schema}".booking b ON b.booking_id = i.booking_id
             LEFT JOIN "{schema}".guest g ON g.guest_id = b.guest_id
             LEFT JOIN "{schema}".room r ON r.room_id = b.room_id
-            LEFT JOIN "{schema}".payment p ON p.invoice_id = i.invoice_id
+            LEFT JOIN LATERAL (
+                SELECT payment_method FROM "{schema}".payment
+                WHERE invoice_id=i.invoice_id AND payment_status='Completed'
+                ORDER BY payment_date DESC LIMIT 1
+            ) p ON TRUE
             ORDER BY i.invoice_date DESC, i.invoice_id
             """
         )
@@ -302,6 +323,26 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
             f'ORDER BY rv.created_at DESC, rv.review_id'
         )
     ).mappings()
+    invoice_lines = connection.execute(
+        text(
+            f'SELECT invoice_id, item_type, reference_code, description, quantity, unit_price, line_total '
+            f'FROM "{schema}".invoice_line_item ORDER BY line_id'
+        )
+    ).mappings()
+    lines_by_invoice: dict[str, list[dict[str, Any]]] = {}
+    for row in invoice_lines:
+        lines_by_invoice.setdefault(row["invoice_id"], []).append(
+            _record(
+                {
+                    "type": row["item_type"],
+                    "referenceCode": row["reference_code"],
+                    "description": row["description"],
+                    "quantity": row["quantity"],
+                    "unitPrice": row["unit_price"],
+                    "total": row["line_total"],
+                }
+            )
+        )
 
     return {
         "rooms": [
@@ -425,8 +466,11 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "taxAmount": row["tax_amount"],
                     "discount": row["discount"],
                     "total": row["total_amount"],
+                    "cgst": row["cgst_amount"],
+                    "sgst": row["sgst_amount"],
                     "status": "Pending" if row["invoice_status"] == "Unpaid" else row["invoice_status"],
                     "paymentMethod": row["payment_method"],
+                    "lines": lines_by_invoice.get(row["invoice_id"], []),
                 }
             )
             for row in invoices
@@ -472,6 +516,358 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                 }
             )
             for row in reviews
+        ],
+    }
+
+
+def invoice_options(connection: Connection, schema: str) -> dict[str, list[dict[str, Any]]]:
+    bookings = connection.execute(
+        text(
+            f"""
+            SELECT b.booking_id, b.guest_id, g.first_name || ' ' || g.last_name AS guest_name,
+                   r.room_number, b.check_in_date, b.check_out_date, b.total_tariff
+            FROM "{schema}".booking b
+            JOIN "{schema}".guest g ON g.guest_id=b.guest_id
+            JOIN "{schema}".room r ON r.room_id=b.room_id
+            WHERE b.booking_status <> 'Cancelled'
+            ORDER BY b.booking_date DESC
+            """
+        )
+    ).mappings()
+    food_orders = connection.execute(
+        text(
+            f"""
+            SELECT o.order_code, o.guest_id, o.guest_name, o.item_name, o.quantity, o.total
+            FROM "{schema}".food_order o
+            WHERE NOT EXISTS (
+                SELECT 1 FROM "{schema}".invoice_line_item line
+                WHERE line.item_type='Food Order' AND line.reference_code=o.order_code
+            )
+            ORDER BY o.order_code
+            """
+        )
+    ).mappings()
+    services = connection.execute(
+        text(
+            f'SELECT service_code, name, category, price '
+            f'FROM "{schema}".hotel_service ORDER BY name'
+        )
+    ).mappings()
+    return {
+        "bookings": [
+            _record(
+                {
+                    "bookingId": row["booking_id"],
+                    "guestId": row["guest_id"],
+                    "guestName": row["guest_name"],
+                    "roomNo": row["room_number"],
+                    "checkIn": row["check_in_date"],
+                    "checkOut": row["check_out_date"],
+                    "roomCharges": row["total_tariff"],
+                }
+            )
+            for row in bookings
+        ],
+        "foodOrders": [
+            _record(
+                {
+                    "orderId": row["order_code"],
+                    "guestId": row["guest_id"],
+                    "guestName": row["guest_name"],
+                    "item": row["item_name"],
+                    "quantity": row["quantity"],
+                    "total": row["total"],
+                }
+            )
+            for row in food_orders
+        ],
+        "services": [
+            _record(
+                {
+                    "serviceId": row["service_code"],
+                    "name": row["name"],
+                    "category": row["category"],
+                    "price": row["price"],
+                }
+            )
+            for row in services
+        ],
+    }
+
+
+def create_invoice(
+    connection: Connection,
+    schema: str,
+    booking_id: str,
+    food_order_ids: list[str],
+    service_ids: list[str],
+    gst_rate: Decimal,
+) -> dict[str, Any]:
+    if len(food_order_ids) != len(set(food_order_ids)) or len(service_ids) != len(set(service_ids)):
+        raise ValueError("Selected food orders and services must not contain duplicates.")
+    booking = connection.execute(
+        text(
+            f"""
+            SELECT b.booking_id, b.guest_id, g.first_name || ' ' || g.last_name AS guest_name,
+                   r.room_number, r.price AS nightly_rate, b.check_in_date, b.check_out_date,
+                   b.total_tariff, b.booking_status
+            FROM "{schema}".booking b
+            JOIN "{schema}".guest g ON g.guest_id=b.guest_id
+            JOIN "{schema}".room r ON r.room_id=b.room_id
+            WHERE b.booking_id=:booking_id
+            FOR UPDATE OF b
+            """
+        ),
+        {"booking_id": booking_id},
+    ).mappings().one_or_none()
+    if booking is None:
+        raise ValueError(f"Booking {booking_id} does not exist.")
+    if booking["booking_status"] == "Cancelled":
+        raise ValueError("An invoice cannot be created for a cancelled booking.")
+    existing_invoice = connection.execute(
+        text(f'SELECT 1 FROM "{schema}".invoice WHERE booking_id=:booking_id LIMIT 1'),
+        {"booking_id": booking_id},
+    ).first()
+    if existing_invoice:
+        raise ValueError(f"Booking {booking_id} already has an invoice.")
+    nights = (booking["check_out_date"] - booking["check_in_date"]).days
+    if nights < 1:
+        raise ValueError("The booking must have at least one night before it can be invoiced.")
+    room_charges = Decimal(str(booking["total_tariff"] or 0))
+    if room_charges <= 0:
+        room_charges = Decimal(str(booking["nightly_rate"])) * nights
+    lines: list[dict[str, Any]] = [
+        {
+            "type": "Room",
+            "referenceCode": booking_id,
+            "description": f"Room {booking['room_number']} - {nights} night(s)",
+            "quantity": nights,
+            "unitPrice": (room_charges / nights).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "total": room_charges,
+        }
+    ]
+
+    if food_order_ids:
+        orders = connection.execute(
+            text(
+                f"""
+                SELECT o.order_code, o.item_name, o.quantity, o.total
+                FROM "{schema}".food_order o
+                WHERE o.order_code IN :order_ids AND o.guest_id=:guest_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM "{schema}".invoice_line_item line
+                      WHERE line.item_type='Food Order' AND line.reference_code=o.order_code
+                  )
+                """
+            ).bindparams(bindparam("order_ids", expanding=True)),
+            {"order_ids": food_order_ids, "guest_id": booking["guest_id"]},
+        ).mappings()
+        orders = list(orders)
+        if len(orders) != len(food_order_ids):
+            raise ValueError("One or more selected food orders do not belong to this guest or were already invoiced.")
+        for order in orders:
+            total = Decimal(str(order["total"]))
+            quantity = int(order["quantity"])
+            lines.append(
+                {
+                    "type": "Food Order",
+                    "referenceCode": order["order_code"],
+                    "description": order["item_name"],
+                    "quantity": quantity,
+                    "unitPrice": (total / quantity).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+                    "total": total,
+                }
+            )
+
+    if service_ids:
+        services = connection.execute(
+            text(
+                f'SELECT service_code, name, price FROM "{schema}".hotel_service '
+                "WHERE service_code IN :service_ids"
+            ).bindparams(bindparam("service_ids", expanding=True)),
+            {"service_ids": service_ids},
+        ).mappings()
+        services = list(services)
+        if len(services) != len(service_ids):
+            raise ValueError("One or more selected hotel services no longer exist.")
+        for service in services:
+            price = Decimal(str(service["price"]))
+            lines.append(
+                {
+                    "type": "Hotel Service",
+                    "referenceCode": service["service_code"],
+                    "description": service["name"],
+                    "quantity": 1,
+                    "unitPrice": price,
+                    "total": price,
+                }
+            )
+
+    room_amount = room_charges
+    add_on_amount = sum((line["total"] for line in lines[1:]), Decimal("0.00"))
+    subtotal = room_amount + add_on_amount
+    cgst = (subtotal * gst_rate / 2).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    sgst = cgst
+    tax = cgst + sgst
+    invoice_id = f"INV-{uuid4().hex[:16].upper()}"
+    connection.execute(
+        text(
+            f"""
+            INSERT INTO "{schema}".invoice
+                (invoice_id, booking_id, room_charges, service_charges, tax_amount,
+                 cgst_amount, sgst_amount, discount, total_amount, invoice_status)
+            VALUES
+                (:invoice_id, :booking_id, :room_charges, :service_charges, :tax,
+                 :cgst, :sgst, 0, :total, 'Unpaid')
+            """
+        ),
+        {
+            "invoice_id": invoice_id,
+            "booking_id": booking_id,
+            "room_charges": room_amount,
+            "service_charges": add_on_amount,
+            "tax": tax,
+            "cgst": cgst,
+            "sgst": sgst,
+            "total": subtotal + tax,
+        },
+    )
+    for line in lines:
+        connection.execute(
+            text(
+                f"""
+                INSERT INTO "{schema}".invoice_line_item
+                    (invoice_id, item_type, reference_code, description, quantity, unit_price, line_total)
+                VALUES
+                    (:invoice_id, :item_type, :reference_code, :description, :quantity, :unit_price, :line_total)
+                """
+            ),
+            {
+                "invoice_id": invoice_id,
+                "item_type": line["type"],
+                "reference_code": line["referenceCode"],
+                "description": line["description"],
+                "quantity": line["quantity"],
+                "unit_price": line["unitPrice"],
+                "line_total": line["total"],
+            },
+        )
+    return {
+        "invoiceId": invoice_id,
+        "bookingId": booking_id,
+        "guestName": booking["guest_name"],
+        "roomNo": booking["room_number"],
+        "roomCharges": float(room_amount),
+        "serviceCharges": float(add_on_amount),
+        "subtotal": float(subtotal),
+        "gstRate": float(gst_rate * 100),
+        "cgst": float(cgst),
+        "sgst": float(sgst),
+        "taxAmount": float(tax),
+        "discount": 0,
+        "total": float(subtotal + tax),
+        "status": "Pending",
+        "lines": [
+            {
+                **line,
+                "unitPrice": float(line["unitPrice"]),
+                "total": float(line["total"]),
+            }
+            for line in lines
+        ],
+    }
+
+
+def settle_invoice(
+    connection: Connection,
+    schema: str,
+    invoice_id: str,
+    payment_method: str,
+) -> None:
+    invoice = connection.execute(
+        text(
+            f'SELECT invoice_id, booking_id, total_amount, invoice_status '
+            f'FROM "{schema}".invoice WHERE invoice_id=:invoice_id FOR UPDATE'
+        ),
+        {"invoice_id": invoice_id},
+    ).mappings().one_or_none()
+    if invoice is None:
+        raise ValueError(f"Invoice {invoice_id} does not exist.")
+    if invoice["invoice_status"] == "Paid":
+        raise ValueError("This invoice is already paid.")
+    payment_id = f"PAY-{sha256(invoice_id.encode('utf-8')).hexdigest()[:16].upper()}"
+    connection.execute(
+        text(
+            f"""
+            INSERT INTO "{schema}".payment
+                (payment_id, invoice_id, booking_id, amount, payment_method, payment_status)
+            VALUES (:payment_id, :invoice_id, :booking_id, :amount, :method, 'Completed')
+            ON CONFLICT (payment_id) DO NOTHING
+            """
+        ),
+        {
+            "payment_id": payment_id,
+            "invoice_id": invoice_id,
+            "booking_id": invoice["booking_id"],
+            "amount": invoice["total_amount"],
+            "method": payment_method,
+        },
+    )
+    connection.execute(
+        text(f'UPDATE "{schema}".invoice SET invoice_status=\'Paid\' WHERE invoice_id=:invoice_id'),
+        {"invoice_id": invoice_id},
+    )
+
+
+def dashboard_analytics(connection: Connection, schema: str) -> dict[str, Any]:
+    totals = connection.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS total_rooms,
+                   COUNT(*) FILTER (WHERE room_status='Occupied') AS occupied_rooms,
+                   COUNT(*) FILTER (WHERE room_status='Available') AS available_rooms,
+                   (
+                       SELECT COUNT(*) FROM "{schema}".booking
+                       WHERE booking_status='Confirmed' AND check_in_date=CURRENT_DATE
+                   ) AS arrivals_today,
+                   (
+                       SELECT COUNT(*) FROM "{schema}".booking
+                       WHERE booking_status='Checked-In' AND check_out_date=CURRENT_DATE
+                   ) AS departures_today,
+                   (
+                       SELECT COALESCE(SUM(amount), 0) FROM "{schema}".payment
+                       WHERE payment_status='Completed' AND payment_date::date=CURRENT_DATE
+                   ) AS revenue_today
+            FROM "{schema}".room
+            """
+        )
+    ).mappings().one()
+    room_types = connection.execute(
+        text(
+            f"""
+            SELECT COALESCE(rt.type_name, 'Uncategorized') AS name,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE r.room_status='Available') AS available
+            FROM "{schema}".room r
+            LEFT JOIN "{schema}".room_type rt ON rt.room_type_id=r.room_type_id
+            GROUP BY rt.type_name
+            ORDER BY rt.type_name NULLS LAST
+            """
+        )
+    ).mappings()
+    total_rooms = int(totals["total_rooms"])
+    occupied = int(totals["occupied_rooms"])
+    return {
+        "totalRooms": total_rooms,
+        "occupiedRooms": occupied,
+        "availableRooms": int(totals["available_rooms"]),
+        "occupancyRate": round(occupied / total_rooms * 100) if total_rooms else 0,
+        "arrivalsToday": int(totals["arrivals_today"]),
+        "departuresToday": int(totals["departures_today"]),
+        "revenueToday": float(totals["revenue_today"]),
+        "roomTypes": [
+            {"name": row["name"], "total": int(row["total"]), "available": int(row["available"])}
+            for row in room_types
         ],
     }
 
