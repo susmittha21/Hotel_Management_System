@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guest Reviews | VS Plaza PMS</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="pms-layout">
+    <aside class="pms-sidebar" id="sidebar">
+      <div class="sidebar-brand"><div class="brand-icon">VS</div><div class="brand-text"><h2>VS PLAZA</h2><span>Property Management</span></div></div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Front Office</div>
+        <a href="dashboard.html" class="nav-item"><span class="icon">&#9632;</span><span>Dashboard</span></a>
+        <a href="rooms.html" class="nav-item"><span class="icon">&#9632;</span><span>Room Status</span></a>
+        <a href="bookings.html" class="nav-item"><span class="icon">&#9632;</span><span>Reservations</span></a>
+        <a href="guests.html" class="nav-item"><span class="icon">&#9632;</span><span>Guest Directory</span></a>
+        <a href="staff.html" class="nav-item"><span class="icon">&#9632;</span><span>Staff Directory</span></a>
+        <a href="housekeeping.html" class="nav-item"><span class="icon">&#9632;</span><span>Housekeeping</span></a>
+        <a href="maintenance.html" class="nav-item"><span class="icon">&#9632;</span><span>Maintenance</span></a>
+        <a href="invoices.html" class="nav-item"><span class="icon">&#9632;</span><span>Invoices</span></a>
+        <a href="food.html" class="nav-item"><span class="icon">&#9632;</span><span>Food &amp; Orders</span></a>
+        <a href="services.html" class="nav-item"><span class="icon">&#9632;</span><span>Hotel Services</span></a>
+        <a href="reviews.html" class="nav-item active"><span class="icon">&#9632;</span><span>Guest Reviews</span></a>
+      </nav>
+      <div class="sidebar-footer"><div class="shift-info"><div class="user-avatar">GR</div><div class="user-meta"><div class="user-name">Guest Reviews</div><div class="user-role">Guest Relations</div></div></div><button class="btn-logout">Sign Out</button></div>
+    </aside>
+
+    <main class="pms-main">
+      <header class="pms-topbar">
+        <div class="topbar-left"><button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button><div class="page-headline"><h1>Guest Reviews</h1><p>Review guest feedback and ratings</p></div></div>
+        <div class="topbar-right"><button class="btn-quick-action" onclick="openModal('newReviewModal')">+ Add Review</button></div>
+      </header>
+
+      <div class="page-content">
+        <div class="card-panel">
+          <div class="card-panel-body" style="padding: 0;">
+            <div class="table-responsive">
+              <table class="pms-table">
+                <thead><tr><th>Review ID</th><th>Guest</th><th>Booking</th><th>Rating</th><th>Comment</th></tr></thead>
+                <tbody id="reviewsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="newReviewModal">
+    <div class="modal-dialog">
+      <div class="modal-header"><h3 class="modal-title">Record Guest Review</h3><button class="modal-close" onclick="closeModal('newReviewModal')">&times;</button></div>
+      <form id="newReviewForm">
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-group"><label class="form-label" for="reviewGuest">Guest Name</label><input type="text" id="reviewGuest" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="reviewBooking">Booking ID</label><input type="text" id="reviewBooking" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="reviewRating">Rating</label><select id="reviewRating" class="form-control"><option value="5">5 - Excellent</option><option value="4">4 - Good</option><option value="3">3 - Average</option><option value="2">2 - Poor</option><option value="1">1 - Very Poor</option></select></div>
+            <div class="form-group full-width"><label class="form-label" for="reviewComment">Comment</label><textarea id="reviewComment" class="form-control" rows="3"></textarea></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('newReviewModal')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Review</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="../js/app.js"></script>
+  <script src="../js/reviews.js"></script>
+</body>
+</html>

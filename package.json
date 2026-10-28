@@ -6,6 +6,6 @@
   "scripts": {
     "dev": "npx.cmd -y serve . -l 3000",
     "start": "npx.cmd -y serve . -l 3000",
-    "serve": "python -m http.server 3000"
+    "serve": "npx.cmd -y serve . -l 3000"
   }
 }
