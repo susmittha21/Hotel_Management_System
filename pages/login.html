@@ -91,7 +91,7 @@
             <option value="postgresql">PostgreSQL</option>
             <option value="mongodb">MongoDB</option>
           </select>
-          <small style="display:block;margin-top:5px;color:#718096;">Changes are saved to both databases.</small>
+          <small style="display:block;margin-top:5px;color:#718096;">Changes save to PostgreSQL and sync to MongoDB when available.</small>
         </div>
 
         <div class="form-group" style="margin-bottom: 12px;">
@@ -128,11 +128,11 @@
           method: 'POST',
           body: JSON.stringify({ username, password, role, dbms })
         });
-        const role = session.role;
+        const authenticatedRole = session.role;
         HotelStore.setAuth({
           loggedIn: true,
           user: session.username,
-          role,
+          role: authenticatedRole,
           dbms: session.dbms
         });
         showToast('Login successful', 'success');
@@ -141,7 +141,7 @@
           'Front Desk': 'dashboard',
           'Operations Staff': 'housekeeping',
           'Accounts Cashier': 'invoices'
-        }[role];
+        }[authenticatedRole];
         window.location.href = `${startPage}.html`;
       } catch (error) {
         showToast(error.message, 'error');
