@@ -107,6 +107,7 @@ function setupInvoiceForm() {
       renderServiceOptions();
       renderFoodOrderOptions();
       showToast(`Invoice ${invoice.invoiceId} created: ₹${Number(invoice.total).toLocaleString('en-IN')}.`, 'success');
+      notifyMongoSyncStatus(invoice.mongoSynced, 'Invoice saved in PostgreSQL.');
     } catch (error) {
       showToast(`Could not create invoice: ${error.message}`, 'error');
     }
@@ -123,8 +124,9 @@ async function markInvoicePaid(invoiceId) {
   }
 
   try {
-    await HotelStore.payInvoice(invoiceId, paymentMethod.trim());
+    const result = await HotelStore.payInvoice(invoiceId, paymentMethod.trim());
     renderInvoicesTable();
+    notifyMongoSyncStatus(result.mongoSynced, 'Payment recorded in PostgreSQL.');
   } catch (error) {
     showToast(`Could not record payment: ${error.message}`, 'error');
   }

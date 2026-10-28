@@ -1,6 +1,6 @@
 # VS PLAZA Hotel Management System - Web Transition & DBMS Integration Guide
 
-An academic Property Management System (PMS) built with semantic HTML5, CSS3, vanilla JavaScript, FastAPI, and PostgreSQL. MongoDB remains optional design guidance and is not connected to the running app.
+An academic Property Management System (PMS) built with semantic HTML5, CSS3, vanilla JavaScript, FastAPI, PostgreSQL, and MongoDB. PostgreSQL is the relational source of truth; the API mirrors application data to MongoDB.
 
 ---
 
@@ -41,14 +41,14 @@ Simply double-click [`index.html`](index.html) to open the public landing page i
 ### Backend Database Purpose
 This frontend is designed as a hotel operations UI for a real backend database system:
 - **PostgreSQL** stores structured business data such as guest records, room inventory, bookings, staff, invoices, payments, housekeeping tasks, and maintenance logs.
-- **MongoDB** is not used by the current application; its later section is optional architecture guidance only.
+- **MongoDB** stores matching application collection documents. Each app write is mirrored to both configured databases.
 - **Frontend responsibility**: collect user actions, render dashboard tables, and send API requests to backend endpoints. It does not manage business data directly in production.
-- **Current API flow**: browser UI -> FastAPI -> PostgreSQL -> JSON response -> browser update.
+- **Current API flow**: browser UI -> FastAPI -> selected database for reads; writes -> PostgreSQL and MongoDB -> response -> browser update.
 
 ### FastAPI and PostgreSQL Connection
-The FastAPI service reads and writes management records in PostgreSQL's relational tables. Rooms, guests, bookings, departments, staff, housekeeping, maintenance, invoices, and payments use the tables below. PostgreSQL also stores the food menu, food orders, hotel services, and reviews in relational tables that the API creates when first used. The API maps the frontend's camel-case records to relational rows and enforces the database's foreign-key and check constraints. Browser `localStorage` is only a cache; PostgreSQL is the source of truth.
+The FastAPI service stores management records in PostgreSQL's relational tables and can mirror the same frontend entities to MongoDB collections. PostgreSQL remains the source of truth for writes and billing transactions. Selecting PostgreSQL works without MongoDB; selecting MongoDB requires it to be reachable and refreshes the mirrored collections from PostgreSQL. Browser `localStorage` is only a cache.
 
-1. Keep your database settings in the root `.env` file. Copy `.env.example` as a template and set `DB_PASSWORD` locally; do not commit or share `.env`.
+1. Keep your database settings in the root `.env` file. Copy `.env.example` as a template and set PostgreSQL (`DB_*`) locally. Set MongoDB (`MONGO_URI`, `MONGO_DB_NAME`) when you want to use MongoDB; it is optional for PostgreSQL-only work. Do not commit or share `.env`.
 2. From the repository root, install the backend dependencies and start the API:
    ```powershell
    py -m venv .venv
@@ -56,10 +56,10 @@ The FastAPI service reads and writes management records in PostgreSQL's relation
    py -m pip install -r requirements.txt
    py -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
    ```
-3. Open `http://127.0.0.1:8000/api/health` to confirm the database connection. `http://127.0.0.1:8000/docs` lists the available API routes.
-4. Open `http://127.0.0.1:8000/docs` to inspect the API. `GET /api/data` reads role-authorized collections; `PUT /api/data/{collection}` transactionally saves allowed collections. Invoices are created and settled through dedicated API endpoints, and `GET /api/analytics` returns live dashboard metrics. If the previous version created `pms_app_data`, the API imports its records into empty relational collections once and records that migration in `hotel_app_migrations`.
+3. Start PostgreSQL, then open `http://127.0.0.1:8000/api/health` to confirm it is connected. MongoDB connectivity is reported separately and is optional when using PostgreSQL. `http://127.0.0.1:8000/docs` lists the available API routes.
+4. `GET /api/data` reads the database chosen at login. Writes, invoice creation, and payments are saved in PostgreSQL first. When MongoDB is available, the API mirrors those records; if it is offline, PostgreSQL operations still succeed and the frontend displays a sync notice. Selecting MongoDB requires it to be reachable. Its collections are refreshed from PostgreSQL, which wins if their data differs.
 
-Run the frontend separately with `npm.cmd run dev` and open `http://localhost:3000`. PostgreSQL credentials remain on the backend and must never be placed in frontend JavaScript.
+Run the frontend separately with `npm.cmd run dev` and open `http://localhost:3000`. PostgreSQL and MongoDB credentials remain on the backend and must never be placed in frontend JavaScript.
 
 #### Staff login and permissions
 
@@ -69,7 +69,9 @@ Set a unique username and password for each role in `.env`. Passwords must be at
 py -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Copy the output to `PMS_SESSION_SECRET`. Keep all account credentials and the session key private and out of Git. The backend sets an HTTP-only session cookie and checks roles on API requests. Use the same `localhost` hostname for both local servers (the frontend is `http://localhost:3000`); this allows the local browser session cookie to work. For HTTPS deployments, set `PMS_COOKIE_SECURE=true`, configure `CORS_ORIGINS` to the exact frontend origin, and set `window.HOTEL_API_BASE_URL` to the deployed API URL ending in `/api`.
+Copy the output to `PMS_SESSION_SECRET`. Keep all account credentials and the session key private and out of Git. On the login screen, select the matching role, select PostgreSQL or MongoDB as the read database, then enter that role's username and password. The backend verifies the username/password against the selected role; the role is not just a visual preference. Writes always save to PostgreSQL first and are mirrored to MongoDB when it is reachable. MongoDB being offline does not block PostgreSQL use. The backend sets an HTTP-only session cookie and enforces role permissions. Use the same `localhost` hostname for both local servers (frontend `http://localhost:3000`). For HTTPS deployments, set `PMS_COOKIE_SECURE=true`, configure `CORS_ORIGINS` to the exact frontend origin, and set `window.HOTEL_API_BASE_URL` to the deployed API URL ending in `/api`.
+
+The database selector does not connect to a database on the browser's laptop. When using MongoDB, its endpoint must be network-accessible from the FastAPI computer. If your team has PostgreSQL and MongoDB on different laptops, configure `MONGO_URI` with the MongoDB laptop's reachable LAN/VPN address and restrict the database port to trusted devices; the frontend alone cannot synchronize two unreachable laptops.
 
 #### Invoice calculation
 
@@ -77,16 +79,16 @@ The invoice page calculates room charges from the booking tariff and nights, opt
 
 ### Staff Login
 - **URL:** [`http://localhost:3000/pages/login.html`](pages/login.html)
-- Sign in with an account configured in `.env`. The role is assigned by the backend and cannot be selected in the form.
+- Select the account's role and the database to read from, then sign in with the username and password configured for that role in `.env`.
 - If the server reports a different frontend port because `3000` is in use, use that port and add its origin to backend `CORS_ORIGINS`.
 
 ---
 
 ## 🗄️ Dual DBMS Setup & Backend Integration (PostgreSQL & MongoDB)
 
-The following MongoDB material is a future design reference only. The current running app uses PostgreSQL exclusively:
+The app uses both database systems:
 - **PostgreSQL**: Handles relational, ACID-compliant transactions (Guest Profiles, Room Inventory, Bookings, Check-In/Check-Out, Invoices, Staff).
-- **MongoDB**: Handles flexible, denormalized, and high-velocity document storage (Audit Logs, Real-time Folio Details, Restaurant Food Orders, Housekeeping Checklists, Guest Reviews).
+- **MongoDB**: Holds mirrored documents for the app's rooms, guests, bookings, staff, invoices, housekeeping, maintenance, menu, food orders, services, reviews, and departments collections.
 
 ```
                       ┌───────────────────────────────────────┐
@@ -108,7 +110,7 @@ The following MongoDB material is a future design reference only. The current ru
 
 ### 1. PostgreSQL Relational Database Setup
 
-The PostgreSQL API is implemented in `backend/main.py` and `backend/storage.py`. Core operational data is mapped to the normalized tables below; PostgreSQL-only tables for menu items, food orders, services, and reviews are created automatically. The API also adds stable frontend task/issue codes to the existing `HOUSEKEEPING` and `MAINTENANCE` tables, and links invoice payments to invoices. The MongoDB section remains optional design guidance and is not part of the current application.
+The API is implemented in `backend/main.py`, `backend/storage.py`, and `backend/mongo_store.py`. Core operational data is mapped to normalized PostgreSQL tables; the API mirrors the corresponding app entities as documents in MongoDB. The PostgreSQL relational schema remains authoritative for writes and invoice/payment calculations.
 
 #### Step 1: Install & Create Database
 ```sql
@@ -249,8 +251,9 @@ CREATE TABLE MAINTENANCE (
 
 ### 2. MongoDB NoSQL Database Setup
 
-#### Step 1: Initialize MongoDB Collections
-Create collections for flexible data structures in MongoDB:
+The API connects to MongoDB using `MONGO_URI` and `MONGO_DB_NAME` from `.env`. Install the dependencies with `py -m pip install -r requirements.txt` and ensure MongoDB is running and reachable before login. The API creates and maintains collections named `rooms`, `guests`, `bookings`, `departments`, `staff`, `housekeeping`, `maintenance`, `invoices`, `food_menu`, `food_orders`, `services`, and `reviews`. Each document is the corresponding frontend entity, keyed by its stable frontend ID. You do not need to run the separate legacy Express server in `backend/server.js` or manually insert the examples below for the current app.
+
+The examples below show an older, optional document-design exercise. They are separate from the current synchronized app collections:
 ```javascript
 use hotel_mongodb;
 
@@ -310,7 +313,7 @@ db.audit_logs.insertOne({
 ## 🔍 ChatGPT ER & Schema Matching Verification
 
 ### How the UI relates to the ER design
-The table below maps the UI modules to the intended entities; it is not a claim that every listed workflow or relationship is complete. The current app has backend-configured login and role checks, invoice calculation, and dashboard analytics; MongoDB and some broader reporting workflows remain unimplemented.
+The table below maps the UI modules to the intended entities; it is not a claim that every listed workflow or relationship is complete. The app has backend-configured login and role checks, invoice calculation, and dashboard analytics. PostgreSQL stores the managed app entities and MongoDB mirrors them when reachable.
 
 | Entity | Relational Model / Schema | Web App Implementation & UI Module | Scope |
 | :--- | :--- | :--- | :--- |
@@ -334,7 +337,7 @@ The table below maps the UI modules to the intended entities; it is not a claim 
 
 ## 👥 Role-Based Access Control (RBAC) Matrix
 
-The backend authenticates accounts configured in `.env`, assigns each account its configured role, and enforces access to PostgreSQL API operations. The frontend hides modules that the signed-in role cannot use; the backend remains the authorization boundary.
+The backend authenticates accounts configured in `.env`, checks the role selected on the login screen against that account, and enforces access to database API operations. The frontend hides modules that the signed-in role cannot use; the backend remains the authorization boundary.
 
 | Login role | Frontend modules available |
 | :--- | :--- |
@@ -343,7 +346,7 @@ The backend authenticates accounts configured in `.env`, assigns each account it
 | Operations Staff | Housekeeping, Maintenance, Food & Orders, Hotel Services, Guest Reviews |
 | Accounts Cashier | Invoices |
 
-The backend enforces these module permissions on PostgreSQL API requests. Staff login accounts are configured through the backend `.env` file.
+The backend enforces these module permissions on API requests. Staff login accounts are configured through the backend `.env` file.
 
 ### Role summary
 - **Hotel Manager:** full access to every frontend module.
@@ -358,18 +361,19 @@ The backend enforces these module permissions on PostgreSQL API requests. Staff 
 | Week | Milestone / Deliverable | Target System Modules | Database Implementation |
 | :--- | :--- | :--- | :--- |
 | **Week 1** | **UI/UX Foundation & Front-Desk Operations** | Public Landing Page, Staff Login, Operations Dashboard, Room Status Board, Reservations & Guest Directory | Pure clean client state ready for live DB connectors; Schema specifications matching ChatGPT ER model. |
-| **Week 2** | **Billing, Folio Management & Invoicing** | Invoice calculation, GST tax breakdown (CGST + SGST), and payment recording (Cash, Card, UPI) | **PostgreSQL**: `INVOICE` and `PAYMENT` relational tables. MongoDB audit logs remain a future idea. |
+| **Week 2** | **Billing, Folio Management & Invoicing** | Invoice calculation, GST tax breakdown (CGST + SGST), and payment recording (Cash, Card, UPI) | PostgreSQL `INVOICE` and `PAYMENT` tables, mirrored to MongoDB invoice documents. |
 | **Week 3** | **Housekeeping, Maintenance & Staff Roster** | Floor-by-floor cleaning board, maintenance issue ticketing, staff shift management, department directory | **PostgreSQL**: `STAFF`, `DEPARTMENT`, `HOUSEKEEPING`, `MAINTENANCE` tables with foreign key constraints. |
-| **Week 4** | **PostgreSQL Persistence and Operations** | Frontend collections, menu/order/review screens, role-protected API, invoice calculation, and dashboard analytics | PostgreSQL integration is implemented for current UI collections. MongoDB and service usage are not implemented. |
+| **Week 4** | **Dual-Database Persistence and Operations** | Frontend collections, menu/order/review screens, role-protected API, invoice calculation, and dashboard analytics | PostgreSQL relational persistence with MongoDB document mirroring for the app collections. |
 
 ---
 
 ## 🧹 Data Storage & Clean State Architecture
 
-- **PostgreSQL persistence:** The application loads and saves its relational collections using `GET /api/data` and `PUT /api/data/{collection}`. Writes are transactional, and PostgreSQL foreign keys and check constraints reject invalid relationships or values.
-- **Browser cache:** The frontend updates `localStorage` only after a successful database save. When a PostgreSQL collection is empty, the app may import its existing cached records once; PostgreSQL then becomes the source of truth.
-- **Additional PostgreSQL tables:** The API creates `food_menu`, `food_order`, and `hotel_service` on first use, and adds a stable external code to the existing `review` table. MongoDB is not required to run the current app.
+- **Database persistence:** PostgreSQL stores relational records; corresponding app entities are mirrored to MongoDB documents. PostgreSQL is the source of truth when the API reconciles the MongoDB copy.
+- **Optional MongoDB mirror:** The API writes to PostgreSQL first, then attempts to synchronize application data to MongoDB. MongoDB downtime does not block PostgreSQL logins, reads, writes, invoice creation, or payments. The frontend displays a notice if a write was not mirrored; after MongoDB is available, choose MongoDB and log in to refresh it from PostgreSQL.
+- **Browser cache:** The frontend updates `localStorage` only after a successful API response. PostgreSQL may import existing cached records once when its collections are empty; it then becomes the source of truth.
+- **Additional PostgreSQL tables:** The API creates `food_menu`, `food_order`, and `hotel_service` on first use, and adds a stable external code to the existing `review` table.
 - **Authentication and authorization:** Accounts are configured on the backend by role; the browser receives an HTTP-only signed session cookie. API permissions are enforced server-side.
-- **Invoices:** The server computes room, food, and selected service charges, adds the configured GST percentage as equal CGST/SGST amounts, and records the invoice and line items in PostgreSQL.
-- **Dashboard analytics:** Occupancy, today's arrivals/departures, room availability, and today's recorded payment revenue are calculated from PostgreSQL.
+- **Invoices:** The server computes room, food, and selected service charges, adds the configured GST percentage as equal CGST/SGST amounts, and records invoice/payment details in PostgreSQL and the mirrored MongoDB invoice document.
+- **Dashboard analytics:** Occupancy, today's arrivals/departures, room availability, and today's recorded payment revenue are available using the selected read database.
 - **Payment recording:** Marking an invoice as paid asks for a supported payment method and writes a corresponding record to `PAYMENT`.

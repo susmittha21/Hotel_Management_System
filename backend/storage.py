@@ -287,13 +287,13 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
             SELECT i.invoice_id, i.booking_id, g.first_name || ' ' || g.last_name AS guest_name,
                    r.room_number, i.room_charges, i.service_charges, i.tax_amount,
                    i.cgst_amount, i.sgst_amount, i.discount, i.total_amount,
-                   i.invoice_status, p.payment_method
+                   i.invoice_status, p.payment_method, p.payment_date
             FROM "{schema}".invoice i
             LEFT JOIN "{schema}".booking b ON b.booking_id = i.booking_id
             LEFT JOIN "{schema}".guest g ON g.guest_id = b.guest_id
             LEFT JOIN "{schema}".room r ON r.room_id = b.room_id
             LEFT JOIN LATERAL (
-                SELECT payment_method FROM "{schema}".payment
+                SELECT payment_method, payment_date FROM "{schema}".payment
                 WHERE invoice_id=i.invoice_id AND payment_status='Completed'
                 ORDER BY payment_date DESC LIMIT 1
             ) p ON TRUE
@@ -470,6 +470,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "sgst": row["sgst_amount"],
                     "status": "Pending" if row["invoice_status"] == "Unpaid" else row["invoice_status"],
                     "paymentMethod": row["payment_method"],
+                    "paymentDate": row["payment_date"],
                     "lines": lines_by_invoice.get(row["invoice_id"], []),
                 }
             )
@@ -485,6 +486,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
             _record(
                 {
                     "orderId": row["order_code"],
+                    "guestId": row["guest_id"],
                     "guestName": row["guest_name"],
                     "item": row["item_name"],
                     "quantity": row["quantity"],

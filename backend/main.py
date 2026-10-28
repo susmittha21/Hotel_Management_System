@@ -4,14 +4,14 @@ import hmac
 import logging
 import os
 import re
-import secrets
 import threading
 import time
 import json
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -19,7 +19,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import URL, create_engine, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from pymongo.errors import PyMongoError
 
+from backend.mongo_store import (
+    check_mongo_connection,
+    get_mongo_database,
+    read_collections as read_mongo_collections,
+    synchronize_collections,
+)
 from backend.storage import (
     create_invoice,
     dashboard_analytics,
@@ -37,6 +44,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 _schema_initialization_lock = threading.Lock()
 _initialized_schemas: set[str] = set()
+_database_sync_lock = threading.RLock()
 
 DATA_COLLECTIONS = {
     "rooms": "roomNo",
@@ -82,6 +90,8 @@ SESSION_MAX_AGE = 60 * 60 * 8
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=200)
+    role: Literal["Hotel Manager", "Front Desk", "Operations Staff", "Accounts Cashier"]
+    dbms: Literal["postgresql", "mongodb"]
 
 
 class InvoiceRequest(BaseModel):
@@ -135,6 +145,104 @@ def ensure_database_schema(schema: str) -> None:
         with get_engine().begin() as connection:
             ensure_extension_tables(connection, schema)
         _initialized_schemas.add(schema)
+
+
+def synchronize_databases(schema: str) -> dict[str, list[dict[str, Any]]]:
+    with _database_sync_lock:
+        with get_engine().connect() as connection:
+            collections = read_collections(connection, schema)
+        synchronize_collections(get_mongo_database(), collections, DATA_COLLECTIONS)
+        return collections
+
+
+def try_synchronize_mongo(schema: str) -> bool:
+    try:
+        synchronize_databases(schema)
+        return True
+    except (RuntimeError, PyMongoError):
+        logger.warning(
+            "MongoDB is unavailable; PostgreSQL changes are saved but not yet mirrored.",
+            exc_info=True,
+        )
+        return False
+
+
+def mongo_invoice_options(
+    collections: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
+    invoiced_orders = {
+        line.get("referenceCode")
+        for invoice in collections["invoices"]
+        for line in invoice.get("lines", [])
+        if line.get("type") == "Food Order"
+    }
+    return {
+        "bookings": [
+            {
+                "bookingId": booking["bookingId"],
+                "guestId": booking["guestId"],
+                "guestName": booking["guestName"],
+                "roomNo": booking["roomNo"],
+                "checkIn": booking["checkIn"],
+                "checkOut": booking["checkOut"],
+                "roomCharges": booking["totalAmount"],
+            }
+            for booking in collections["bookings"]
+            if booking.get("status") != "Cancelled"
+        ],
+        "foodOrders": [
+            {
+                "orderId": order["orderId"],
+                "guestId": order.get("guestId"),
+                "guestName": order["guestName"],
+                "item": order["item"],
+                "quantity": order["quantity"],
+                "total": order["total"],
+            }
+            for order in collections["food_orders"]
+            if order["orderId"] not in invoiced_orders
+        ],
+        "services": collections["services"],
+    }
+
+
+def mongo_dashboard_analytics(collections: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    rooms = collections["rooms"]
+    bookings = collections["bookings"]
+    today = date.today().isoformat()
+    totals_by_type: dict[str, dict[str, int]] = {}
+    for room in rooms:
+        name = room.get("type") or "Uncategorized"
+        summary = totals_by_type.setdefault(name, {"total": 0, "available": 0})
+        summary["total"] += 1
+        if room.get("status") == "Available":
+            summary["available"] += 1
+    occupied = sum(room.get("status") == "Occupied" for room in rooms)
+    paid_today = sum(
+        float(invoice.get("total", 0))
+        for invoice in collections["invoices"]
+        if invoice.get("status") == "Paid"
+        and str(invoice.get("paymentDate", "")).startswith(today)
+    )
+    return {
+        "totalRooms": len(rooms),
+        "occupiedRooms": occupied,
+        "availableRooms": sum(room.get("status") == "Available" for room in rooms),
+        "occupancyRate": round(occupied / len(rooms) * 100) if rooms else 0,
+        "arrivalsToday": sum(
+            booking.get("status") == "Confirmed" and booking.get("checkIn") == today
+            for booking in bookings
+        ),
+        "departuresToday": sum(
+            booking.get("status") == "Checked-In" and booking.get("checkOut") == today
+            for booking in bookings
+        ),
+        "revenueToday": paid_today,
+        "roomTypes": [
+            {"name": name, **summary}
+            for name, summary in sorted(totals_by_type.items())
+        ],
+    }
 
 
 app = FastAPI(title="VS Plaza Hotel Management API", version="1.0.0")
@@ -191,9 +299,9 @@ def _session_secret() -> bytes:
     return secret.encode("utf-8")
 
 
-def _encode_session(username: str, role: str) -> str:
+def _encode_session(username: str, role: str, dbms: str) -> str:
     payload = json.dumps(
-        {"sub": username, "role": role, "exp": int(time.time()) + SESSION_MAX_AGE},
+        {"sub": username, "role": role, "dbms": dbms, "exp": int(time.time()) + SESSION_MAX_AGE},
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
@@ -211,12 +319,16 @@ def current_user(request: Request) -> dict[str, str]:
         if not hmac.compare_digest(expected, supplied):
             raise ValueError("Invalid session signature.")
         payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
-        if payload.get("exp", 0) < int(time.time()) or payload.get("role") not in ROLE_MODULES:
+        if (
+            payload.get("exp", 0) < int(time.time())
+            or payload.get("role") not in ROLE_MODULES
+            or payload.get("dbms") not in {"postgresql", "mongodb"}
+        ):
             raise ValueError("Expired or invalid session.")
         configured = _configured_users().get(payload.get("role"))
         if not configured or configured[0] != payload.get("sub"):
             raise ValueError("Staff account is no longer configured.")
-        return {"username": payload["sub"], "role": payload["role"]}
+        return {"username": payload["sub"], "role": payload["role"], "dbms": payload["dbms"]}
     except (ValueError, KeyError, TypeError, json.JSONDecodeError, RuntimeError):
         raise HTTPException(status_code=401, detail="A valid staff login is required.") from None
 
@@ -240,22 +352,37 @@ def login(credentials: LoginRequest, request: Request, response: Response):
         _session_secret()
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from None
-    for role, (username, password) in users.items():
-        username_matches = hmac.compare_digest(credentials.username.strip().casefold(), username.casefold())
-        password_matches = hmac.compare_digest(credentials.password, password)
-        if username_matches and password_matches:
-            secure_cookie = os.getenv("PMS_COOKIE_SECURE", "false").strip().casefold() == "true"
-            response.set_cookie(
-                SESSION_COOKIE,
-                _encode_session(username, role),
-                max_age=SESSION_MAX_AGE,
-                httponly=True,
-                secure=secure_cookie,
-                samesite="strict",
-                path="/",
-            )
-            return {"username": username, "role": role}
-    raise HTTPException(status_code=401, detail="Incorrect username or password.")
+    configured = users.get(credentials.role)
+    if not configured:
+        raise HTTPException(status_code=401, detail="No account is configured for the selected role.")
+    username, password = configured
+    username_matches = hmac.compare_digest(credentials.username.strip().casefold(), username.casefold())
+    password_matches = hmac.compare_digest(credentials.password, password)
+    if not (username_matches and password_matches):
+        raise HTTPException(status_code=401, detail="Credentials do not match the selected role.")
+    try:
+        settings = database_settings()
+        with _database_sync_lock:
+            ensure_database_schema(settings["schema"])
+            if credentials.dbms == "mongodb":
+                synchronize_databases(settings["schema"])
+    except (SQLAlchemyError, RuntimeError, ValueError, PyMongoError):
+        logger.exception("Unable to synchronize PostgreSQL and MongoDB before login")
+        raise HTTPException(
+            status_code=503,
+            detail="Both databases must be configured and reachable before login. Check PostgreSQL and MongoDB settings.",
+        ) from None
+    secure_cookie = os.getenv("PMS_COOKIE_SECURE", "false").strip().casefold() == "true"
+    response.set_cookie(
+        SESSION_COOKIE,
+        _encode_session(username, credentials.role, credentials.dbms),
+        max_age=SESSION_MAX_AGE,
+        httponly=True,
+        secure=secure_cookie,
+        samesite="strict",
+        path="/",
+    )
+    return {"username": username, "role": credentials.role, "dbms": credentials.dbms}
 
 
 @app.get("/api/auth/me")
@@ -274,22 +401,26 @@ def logout(request: Request, response: Response):
 def get_app_data(user: dict[str, str] = Depends(current_user)):
     try:
         schema = database_settings()["schema"]
-        ensure_database_schema(schema)
-        with get_engine().connect() as connection:
-            data = read_collections(connection, schema)
-            visible = {
-                collection
-                for collection, roles in COLLECTION_ROLES.items()
-                if user["role"] in roles
-            }
-            return {collection: rows for collection, rows in data.items() if collection in visible}
-    except (SQLAlchemyError, RuntimeError, ValueError):
-        logger.exception("Unable to load application data from PostgreSQL")
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            if user["dbms"] == "mongodb":
+                synchronize_databases(schema)
+                data = read_mongo_collections(get_mongo_database(), list(DATA_COLLECTIONS))
+            else:
+                with get_engine().connect() as connection:
+                    data = read_collections(connection, schema)
+        visible = {
+            collection
+            for collection, roles in COLLECTION_ROLES.items()
+            if user["role"] in roles
+        }
+        return {collection: rows for collection, rows in data.items() if collection in visible}
+    except (SQLAlchemyError, RuntimeError, ValueError, PyMongoError):
+        logger.exception("Unable to load application data from the selected database")
         raise HTTPException(
             status_code=503,
             detail=(
-                "Unable to load application data from PostgreSQL. Confirm the schema tables "
-                "from README.md exist and check the database connection."
+                "Unable to load application data. Check the selected database connection and PostgreSQL schema."
             ),
         ) from None
 
@@ -326,10 +457,16 @@ def replace_app_data(
 
     try:
         schema = database_settings()["schema"]
-        ensure_database_schema(schema)
-        with get_engine().begin() as connection:
-            saved = replace_collection(connection, schema, collection, records)
-        return {"collection": collection, "saved": saved}
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                saved = replace_collection(connection, schema, collection, records)
+            mongo_synced = try_synchronize_mongo(schema)
+        return {
+            "collection": collection,
+            "saved": saved,
+            "mongoSynced": mongo_synced,
+        }
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from None
     except IntegrityError:
@@ -354,9 +491,16 @@ def get_invoice_options(user: dict[str, str] = Depends(current_user)):
     _require_role(user, {"Hotel Manager", "Accounts Cashier"})
     try:
         schema = database_settings()["schema"]
-        ensure_database_schema(schema)
-        with get_engine().connect() as connection:
-            options = invoice_options(connection, schema)
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            if user["dbms"] == "mongodb":
+                synchronize_databases(schema)
+                options = mongo_invoice_options(
+                    read_mongo_collections(get_mongo_database(), list(DATA_COLLECTIONS))
+                )
+            else:
+                with get_engine().connect() as connection:
+                    options = invoice_options(connection, schema)
         try:
             rate = Decimal(os.getenv("PMS_GST_RATE", "5"))
         except InvalidOperation:
@@ -365,9 +509,9 @@ def get_invoice_options(user: dict[str, str] = Depends(current_user)):
             raise RuntimeError("PMS_GST_RATE must be a number from 0 to 100.")
         options["gstRate"] = float(rate)
         return options
-    except (SQLAlchemyError, RuntimeError, ValueError):
+    except (SQLAlchemyError, RuntimeError, ValueError, PyMongoError):
         logger.exception("Unable to load invoice options")
-        raise HTTPException(status_code=503, detail="Unable to load invoice options from PostgreSQL.") from None
+        raise HTTPException(status_code=503, detail="Unable to load synchronized invoice options.") from None
 
 
 @app.post("/api/invoices", status_code=201)
@@ -383,22 +527,24 @@ def post_invoice(
         if gst_rate < 0 or gst_rate > 1:
             raise ValueError("PMS_GST_RATE must be a number from 0 to 100.")
         schema = database_settings()["schema"]
-        ensure_database_schema(schema)
-        with get_engine().begin() as connection:
-            invoice = create_invoice(
-                connection,
-                schema,
-                payload.bookingId,
-                payload.foodOrderIds,
-                payload.serviceIds,
-                gst_rate,
-            )
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                invoice = create_invoice(
+                    connection,
+                    schema,
+                    payload.bookingId,
+                    payload.foodOrderIds,
+                    payload.serviceIds,
+                    gst_rate,
+                )
+            invoice["mongoSynced"] = try_synchronize_mongo(schema)
         return invoice
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from None
     except (SQLAlchemyError, RuntimeError, InvalidOperation):
         logger.exception("Unable to create invoice")
-        raise HTTPException(status_code=503, detail="Unable to create invoice in PostgreSQL.") from None
+        raise HTTPException(status_code=503, detail="Unable to create the invoice in PostgreSQL.") from None
 
 
 @app.put("/api/invoices/{invoice_id}/payment")
@@ -415,15 +561,22 @@ def put_invoice_payment(
         raise HTTPException(status_code=422, detail="Unsupported payment method.")
     try:
         schema = database_settings()["schema"]
-        ensure_database_schema(schema)
-        with get_engine().begin() as connection:
-            settle_invoice(connection, schema, invoice_id, payment_method)
-        return {"invoiceId": invoice_id, "status": "Paid", "paymentMethod": payment_method}
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                settle_invoice(connection, schema, invoice_id, payment_method)
+            mongo_synced = try_synchronize_mongo(schema)
+        return {
+            "invoiceId": invoice_id,
+            "status": "Paid",
+            "paymentMethod": payment_method,
+            "mongoSynced": mongo_synced,
+        }
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from None
-    except SQLAlchemyError:
+    except (SQLAlchemyError, RuntimeError):
         logger.exception("Unable to record invoice payment")
-        raise HTTPException(status_code=503, detail="Unable to record payment in PostgreSQL.") from None
+        raise HTTPException(status_code=503, detail="Unable to record the payment in PostgreSQL.") from None
 
 
 @app.get("/api/analytics")
@@ -431,12 +584,17 @@ def get_dashboard_analytics(user: dict[str, str] = Depends(current_user)):
     _require_role(user, {"Hotel Manager", "Front Desk"})
     try:
         schema = database_settings()["schema"]
-        ensure_database_schema(schema)
-        with get_engine().connect() as connection:
-            return dashboard_analytics(connection, schema)
-    except (SQLAlchemyError, RuntimeError, ValueError):
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            if user["dbms"] == "mongodb":
+                synchronize_databases(schema)
+                data = read_mongo_collections(get_mongo_database(), list(DATA_COLLECTIONS))
+                return mongo_dashboard_analytics(data)
+            with get_engine().connect() as connection:
+                return dashboard_analytics(connection, schema)
+    except (SQLAlchemyError, RuntimeError, ValueError, PyMongoError):
         logger.exception("Unable to load dashboard analytics")
-        raise HTTPException(status_code=503, detail="Unable to load PostgreSQL dashboard analytics.") from None
+        raise HTTPException(status_code=503, detail="Unable to load synchronized database analytics.") from None
 
 
 @app.get("/api/health")
@@ -446,17 +604,25 @@ def health_check():
         engine = get_engine()
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
+        try:
+            check_mongo_connection()
+            mongodb_status = "connected"
+        except (RuntimeError, PyMongoError):
+            logger.info("MongoDB is unavailable; PostgreSQL remains available for the application.")
+            mongodb_status = "disconnected"
         return {
             "status": "ok",
             "database": "connected",
             "database_name": settings["database"],
             "schema": settings["schema"],
+            "mongodb": mongodb_status,
+            "mongodb_database": os.getenv("MONGO_DB_NAME", ""),
         }
     except (SQLAlchemyError, RuntimeError, ValueError):
         logger.exception("PostgreSQL health check failed")
         raise HTTPException(
             status_code=503,
-            detail="PostgreSQL is unavailable. Check the local .env settings and database service.",
+            detail="PostgreSQL is unavailable. Check the PostgreSQL .env settings and database service.",
         ) from None
 
 
@@ -465,6 +631,19 @@ def list_rooms(user: dict[str, str] = Depends(current_user)):
     _require_role(user, {"Hotel Manager", "Front Desk"})
     try:
         settings = database_settings()
+        if user["dbms"] == "mongodb":
+            with _database_sync_lock:
+                records = synchronize_databases(settings["schema"])["rooms"]
+            return [
+                {
+                    "room_number": room["roomNo"],
+                    "room_status": room["status"],
+                    "price": room["price"],
+                    "capacity": room["capacity"],
+                    "floor_number": room["floor"],
+                }
+                for room in records
+            ]
         engine = get_engine()
         query = text(
             f"""
@@ -477,8 +656,8 @@ def list_rooms(user: dict[str, str] = Depends(current_user)):
         with engine.connect() as connection:
             rows = connection.execute(query).mappings().all()
         return [dict(row) for row in rows]
-    except SQLAlchemyError as error:
-        logger.exception("Unable to load rooms from PostgreSQL")
+    except (SQLAlchemyError, PyMongoError) as error:
+        logger.exception("Unable to load rooms from the selected database")
         if getattr(getattr(error, "orig", None), "sqlstate", None) == "42P01":
             raise HTTPException(
                 status_code=503,
@@ -489,7 +668,7 @@ def list_rooms(user: dict[str, str] = Depends(current_user)):
             detail="Unable to load rooms. Check the database connection and schema.",
         ) from None
     except (RuntimeError, ValueError):
-        logger.exception("PostgreSQL room query configuration failed")
+        logger.exception("Room query configuration failed")
         raise HTTPException(
             status_code=503,
             detail="Unable to load rooms. Check the local .env settings.",

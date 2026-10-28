@@ -79,6 +79,13 @@ const DATA_COLLECTIONS = {
   [STORAGE_KEYS.REVIEWS]: 'reviews'
 };
 const pendingCollectionWrites = new Map();
+let mongoSyncNoticeShown = false;
+
+function notifyMongoSyncStatus(mongoSynced, message = 'Changes were saved in PostgreSQL.') {
+  if (mongoSynced !== false || mongoSyncNoticeShown) return;
+  mongoSyncNoticeShown = true;
+  showToast(`${message} MongoDB is offline; it will sync when available.`, 'info');
+}
 
 function saveCollectionToDatabase(storageKey, collection, records) {
   const previousWrite = pendingCollectionWrites.get(collection) || Promise.resolve();
@@ -93,10 +100,10 @@ function saveCollectionToDatabase(storageKey, collection, records) {
       const result = await response.json().catch(() => ({}));
       throw new Error(result.detail || `Database save failed (${response.status}).`);
     }
-    return response.json().then(result => {
-      localStorage.setItem(storageKey, JSON.stringify(records));
-      return result;
-    });
+    const result = await response.json();
+    localStorage.setItem(storageKey, JSON.stringify(records));
+    notifyMongoSyncStatus(result.mongoSynced, 'Saved in PostgreSQL.');
+    return result;
   });
   pendingCollectionWrites.set(collection, write);
   return write.catch(error => {
