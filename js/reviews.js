@@ -1,4 +1,11 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize reviews from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   renderReviewsTable();
   setupReviewForm();
 });
@@ -28,7 +35,7 @@ function setupReviewForm() {
   const form = document.getElementById('newReviewForm');
   if (!form) return;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const review = {
       reviewId: `REV-${Date.now().toString().slice(-5)}`,
@@ -40,7 +47,7 @@ function setupReviewForm() {
 
     const reviews = HotelStore.getReviews();
     reviews.push(review);
-    HotelStore.saveReviews(reviews);
+    if (await HotelStore.saveReviews(reviews) === false) return;
     form.reset();
     closeModal('newReviewModal');
     renderReviewsTable();

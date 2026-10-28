@@ -1,10 +1,17 @@
-document.addEventListener('DOMContentLoaded', () => {
-  initializeFoodMenu();
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize food orders from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
+  await initializeFoodMenu();
   renderFoodOrdersTable();
   setupFoodOrderForm();
 });
 
-function initializeFoodMenu() {
+async function initializeFoodMenu() {
   const menuSelect = document.getElementById('foodItem');
   if (!menuSelect) return;
 
@@ -18,7 +25,7 @@ function initializeFoodMenu() {
 
   const existing = HotelStore.getFoodMenu();
   const menu = existing.length ? existing : defaultMenu;
-  HotelStore.saveFoodMenu(menu);
+  if (await HotelStore.saveFoodMenu(menu) === false) return;
 
   menuSelect.innerHTML = menu.map(item => `<option value="${item.name}">${item.name} - ₹${item.price}</option>`).join('');
 }
@@ -49,7 +56,7 @@ function setupFoodOrderForm() {
   const form = document.getElementById('newFoodOrderForm');
   if (!form) return;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const guestName = document.getElementById('foodGuestName').value.trim();
     const item = document.getElementById('foodItem').value;
@@ -70,7 +77,7 @@ function setupFoodOrderForm() {
 
     const orders = HotelStore.getFoodOrders();
     orders.push(order);
-    HotelStore.saveFoodOrders(orders);
+    if (await HotelStore.saveFoodOrders(orders) === false) return;
     form.reset();
     closeModal('newOrderModal');
     renderFoodOrdersTable();

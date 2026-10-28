@@ -1,4 +1,11 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize maintenance from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   renderMaintenanceTable();
   setupIssueForm();
 });
@@ -30,7 +37,7 @@ function setupIssueForm() {
   const form = document.getElementById('newIssueForm');
   if (!form) return;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const issue = {
       issueId: `MI-${Date.now().toString().slice(-5)}`,
@@ -43,7 +50,7 @@ function setupIssueForm() {
 
     const issues = HotelStore.getMaintenance();
     issues.push(issue);
-    HotelStore.saveMaintenance(issues);
+    if (await HotelStore.saveMaintenance(issues) === false) return;
     form.reset();
     closeModal('newIssueModal');
     renderMaintenanceTable();
@@ -51,9 +58,9 @@ function setupIssueForm() {
   });
 }
 
-function markIssueResolved(issueId) {
+async function markIssueResolved(issueId) {
   const issues = HotelStore.getMaintenance();
   const updated = issues.map(issue => issue.issueId === issueId ? { ...issue, status: 'Resolved' } : issue);
-  HotelStore.saveMaintenance(updated);
+  if (await HotelStore.saveMaintenance(updated) === false) return;
   renderMaintenanceTable();
 }

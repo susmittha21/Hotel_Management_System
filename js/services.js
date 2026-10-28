@@ -1,4 +1,11 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize services from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   renderServicesTable();
   setupServiceForm();
 });
@@ -28,7 +35,7 @@ function setupServiceForm() {
   const form = document.getElementById('newServiceForm');
   if (!form) return;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const service = {
       serviceId: `SRV-${Date.now().toString().slice(-5)}`,
@@ -39,7 +46,7 @@ function setupServiceForm() {
 
     const services = HotelStore.getServices();
     services.push(service);
-    HotelStore.saveServices(services);
+    if (await HotelStore.saveServices(services) === false) return;
     form.reset();
     closeModal('newServiceModal');
     renderServicesTable();
@@ -47,9 +54,9 @@ function setupServiceForm() {
   });
 }
 
-function removeService(serviceId) {
+async function removeService(serviceId) {
   const services = HotelStore.getServices();
   const updated = services.filter(service => service.serviceId !== serviceId);
-  HotelStore.saveServices(updated);
+  if (await HotelStore.saveServices(updated) === false) return;
   renderServicesTable();
 }

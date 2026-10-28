@@ -63,6 +63,52 @@ const ROLE_HOME_MODULE = {
   'Accounts Cashier': 'invoices'
 };
 
+const API_BASE_URL = 'http://127.0.0.1:8000/api';
+const DATA_COLLECTIONS = {
+  [STORAGE_KEYS.ROOMS]: 'rooms',
+  [STORAGE_KEYS.GUESTS]: 'guests',
+  [STORAGE_KEYS.BOOKINGS]: 'bookings',
+  [STORAGE_KEYS.DEPARTMENTS]: 'departments',
+  [STORAGE_KEYS.STAFF]: 'staff',
+  [STORAGE_KEYS.HOUSEKEEPING]: 'housekeeping',
+  [STORAGE_KEYS.MAINTENANCE]: 'maintenance',
+  [STORAGE_KEYS.INVOICES]: 'invoices',
+  [STORAGE_KEYS.FOOD_MENU]: 'food_menu',
+  [STORAGE_KEYS.FOOD_ORDERS]: 'food_orders',
+  [STORAGE_KEYS.SERVICES]: 'services',
+  [STORAGE_KEYS.REVIEWS]: 'reviews'
+};
+const pendingCollectionWrites = new Map();
+
+function saveCollectionToDatabase(storageKey, collection, records) {
+  const previousWrite = pendingCollectionWrites.get(collection) || Promise.resolve();
+  const write = previousWrite.catch(() => {}).then(async () => {
+    const response = await fetch(`${API_BASE_URL}/data/${collection}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(records)
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.detail || `Database save failed (${response.status}).`);
+    }
+    return response.json().then(result => {
+      localStorage.setItem(storageKey, JSON.stringify(records));
+      return result;
+    });
+  });
+  pendingCollectionWrites.set(collection, write);
+  return write.catch(error => {
+    console.error(`Unable to save ${collection} to PostgreSQL.`, error);
+    showToast(`Database save failed for ${collection}: ${error.message}`, 'error');
+    return false;
+  }).finally(() => {
+    if (pendingCollectionWrites.get(collection) === write) {
+      pendingCollectionWrites.delete(collection);
+    }
+  });
+}
+
 // Automatic cleanup of legacy demo records so database integration starts clean
 (function purgeLegacyDemoData() {
   try {
@@ -83,6 +129,60 @@ const ROLE_HOME_MODULE = {
 
 // Data Store Accessors
 const HotelStore = {
+  _databaseReady: null,
+
+  initialize() {
+    if (!this._databaseReady) {
+      this._databaseReady = fetch(`${API_BASE_URL}/data`)
+        .then(async response => {
+          if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.detail || `Database request failed (${response.status}).`);
+          }
+          return response.json();
+        })
+        .then(async data => {
+          const legacyRecords = {};
+          Object.entries(DATA_COLLECTIONS).forEach(([storageKey, collection]) => {
+            let existingRecords = [];
+            try {
+              const cached = JSON.parse(localStorage.getItem(storageKey) || '[]');
+              if (Array.isArray(cached)) existingRecords = cached;
+            } catch (error) {
+              console.warn(`Ignoring invalid local cache for ${collection}.`, error);
+            }
+            const databaseRecords = data[collection] || [];
+            const records = databaseRecords.length ? databaseRecords : existingRecords;
+            localStorage.setItem(storageKey, JSON.stringify(records));
+            if (!databaseRecords.length && existingRecords.length) {
+              legacyRecords[collection] = { storageKey, records };
+            }
+          });
+          const migrations = Object.entries(legacyRecords).map(([collection, dataSet]) =>
+            saveCollectionToDatabase(dataSet.storageKey, collection, dataSet.records)
+          );
+          if (!data.departments || data.departments.length === 0) {
+            if (!legacyRecords.departments) migrations.push(this.saveDepartments(DEFAULT_DEPARTMENTS));
+          }
+          if (!data.food_menu || data.food_menu.length === 0) {
+            if (!legacyRecords.food_menu) migrations.push(this.saveFoodMenu(DEFAULT_FOOD_MENU));
+          }
+          if (!data.services || data.services.length === 0) {
+            if (!legacyRecords.services) migrations.push(this.saveServices(DEFAULT_SERVICES));
+          }
+          const saves = await Promise.all(migrations);
+          if (saves.includes(false)) {
+            throw new Error('Unable to initialize default database records.');
+          }
+        })
+        .catch(error => {
+          this._databaseReady = null;
+          throw error;
+        });
+    }
+    return this._databaseReady;
+  },
+
   getRooms() {
     const data = localStorage.getItem(STORAGE_KEYS.ROOMS);
     if (!data) return [];
@@ -99,7 +199,7 @@ const HotelStore = {
   },
 
   saveRooms(rooms) {
-    localStorage.setItem(STORAGE_KEYS.ROOMS, JSON.stringify(rooms));
+    return saveCollectionToDatabase(STORAGE_KEYS.ROOMS, 'rooms', rooms);
   },
 
   getGuests() {
@@ -118,7 +218,7 @@ const HotelStore = {
   },
 
   saveGuests(guests) {
-    localStorage.setItem(STORAGE_KEYS.GUESTS, JSON.stringify(guests));
+    return saveCollectionToDatabase(STORAGE_KEYS.GUESTS, 'guests', guests);
   },
 
   getBookings() {
@@ -137,7 +237,7 @@ const HotelStore = {
   },
 
   saveBookings(bookings) {
-    localStorage.setItem(STORAGE_KEYS.BOOKINGS, JSON.stringify(bookings));
+    return saveCollectionToDatabase(STORAGE_KEYS.BOOKINGS, 'bookings', bookings);
   },
 
   getDepartments() {
@@ -150,7 +250,7 @@ const HotelStore = {
   },
 
   saveDepartments(departments) {
-    localStorage.setItem(STORAGE_KEYS.DEPARTMENTS, JSON.stringify(departments));
+    return saveCollectionToDatabase(STORAGE_KEYS.DEPARTMENTS, 'departments', departments);
   },
 
   getStaff() {
@@ -160,7 +260,7 @@ const HotelStore = {
   },
 
   saveStaff(staff) {
-    localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(staff));
+    return saveCollectionToDatabase(STORAGE_KEYS.STAFF, 'staff', staff);
   },
 
   getHousekeeping() {
@@ -170,7 +270,7 @@ const HotelStore = {
   },
 
   saveHousekeeping(list) {
-    localStorage.setItem(STORAGE_KEYS.HOUSEKEEPING, JSON.stringify(list));
+    return saveCollectionToDatabase(STORAGE_KEYS.HOUSEKEEPING, 'housekeeping', list);
   },
 
   getMaintenance() {
@@ -180,7 +280,7 @@ const HotelStore = {
   },
 
   saveMaintenance(list) {
-    localStorage.setItem(STORAGE_KEYS.MAINTENANCE, JSON.stringify(list));
+    return saveCollectionToDatabase(STORAGE_KEYS.MAINTENANCE, 'maintenance', list);
   },
 
   getInvoices() {
@@ -190,7 +290,7 @@ const HotelStore = {
   },
 
   saveInvoices(invoices) {
-    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
+    return saveCollectionToDatabase(STORAGE_KEYS.INVOICES, 'invoices', invoices);
   },
 
   getFoodMenu() {
@@ -203,7 +303,7 @@ const HotelStore = {
   },
 
   saveFoodMenu(menu) {
-    localStorage.setItem(STORAGE_KEYS.FOOD_MENU, JSON.stringify(menu));
+    return saveCollectionToDatabase(STORAGE_KEYS.FOOD_MENU, 'food_menu', menu);
   },
 
   getFoodOrders() {
@@ -213,7 +313,7 @@ const HotelStore = {
   },
 
   saveFoodOrders(orders) {
-    localStorage.setItem(STORAGE_KEYS.FOOD_ORDERS, JSON.stringify(orders));
+    return saveCollectionToDatabase(STORAGE_KEYS.FOOD_ORDERS, 'food_orders', orders);
   },
 
   getServices() {
@@ -226,7 +326,7 @@ const HotelStore = {
   },
 
   saveServices(services) {
-    localStorage.setItem(STORAGE_KEYS.SERVICES, JSON.stringify(services));
+    return saveCollectionToDatabase(STORAGE_KEYS.SERVICES, 'services', services);
   },
 
   getReviews() {
@@ -236,7 +336,7 @@ const HotelStore = {
   },
 
   saveReviews(reviews) {
-    localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
+    return saveCollectionToDatabase(STORAGE_KEYS.REVIEWS, 'reviews', reviews);
   },
 
   clearAllData() {

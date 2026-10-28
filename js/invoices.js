@@ -1,4 +1,11 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize invoices from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   renderInvoicesTable();
   setupInvoiceForm();
 });
@@ -30,7 +37,7 @@ function setupInvoiceForm() {
   const form = document.getElementById('newInvoiceForm');
   if (!form) return;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const invoice = {
       invoiceId: `INV-${Date.now().toString().slice(-5)}`,
@@ -43,7 +50,7 @@ function setupInvoiceForm() {
 
     const invoices = HotelStore.getInvoices();
     invoices.push(invoice);
-    HotelStore.saveInvoices(invoices);
+    if (await HotelStore.saveInvoices(invoices) === false) return;
     form.reset();
     closeModal('newInvoiceModal');
     renderInvoicesTable();
@@ -51,9 +58,9 @@ function setupInvoiceForm() {
   });
 }
 
-function markInvoicePaid(invoiceId) {
+async function markInvoicePaid(invoiceId) {
   const invoices = HotelStore.getInvoices();
   const updated = invoices.map(invoice => invoice.invoiceId === invoiceId ? { ...invoice, status: 'Paid' } : invoice);
-  HotelStore.saveInvoices(updated);
+  if (await HotelStore.saveInvoices(updated) === false) return;
   renderInvoicesTable();
 }

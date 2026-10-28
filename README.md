@@ -45,6 +45,22 @@ This frontend is designed as a hotel operations UI for a real backend database s
 - **Frontend responsibility**: collect user actions, render dashboard tables, and send API requests to backend endpoints. It does not manage business data directly in production.
 - **Typical API flow**: browser UI -> REST API -> PostgreSQL / MongoDB -> JSON response -> browser update.
 
+### FastAPI and PostgreSQL Connection
+The FastAPI service connects the management screens to PostgreSQL. Screens load their records from the API and save creates, updates, and deletes back to PostgreSQL. The API creates an additive `pms_app_data` table in the configured schema to store each screen's JSON records; it does not alter or replace the relational tables described below. When a collection is empty in PostgreSQL, existing browser-cached records are imported once, and built-in departments, menu items, and services are initialized.
+
+1. Keep your database settings in the root `.env` file. Copy `.env.example` as a template and set `DB_PASSWORD` locally; do not commit or share `.env`.
+2. From the repository root, install the backend dependencies and start the API:
+   ```powershell
+   py -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   py -m pip install -r requirements.txt
+   py -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+   ```
+3. Open `http://127.0.0.1:8000/api/health` to confirm the database connection. `http://127.0.0.1:8000/docs` lists the available API routes.
+4. Open `http://127.0.0.1:8000/docs` to inspect the API. `GET /api/data` reads all screen collections; `PUT /api/data/{collection}` saves a screen collection. The separate `GET /api/rooms` endpoint reads the relational `ROOM` table. The current screen integration stores room data in `pms_app_data`; it does not yet map those screen records to the normalized `ROOM`, `GUEST`, `BOOKING`, and other relational tables below.
+
+Run the frontend separately with `npm.cmd run dev` and open `http://localhost:3000`. PostgreSQL credentials remain on the backend and must never be placed in frontend JavaScript.
+
 ### Demo Login Details (Frontend Only)
 - **URL:** [`http://localhost:3000/pages/login.html`](pages/login.html)
 - If the server reports a different port because `3000` is already in use, replace `3000` with the port shown in the server output.
@@ -82,7 +98,7 @@ The system is architected to operate with a dual database backend:
 
 ### 1. PostgreSQL Relational Database Setup
 
-The SQL and MongoDB examples in this guide are database creation specifications for the planned backend. This repository does not currently include an API server, database connection, or database migration scripts.
+The PostgreSQL API is implemented in `backend/main.py` and the management frontend reads and writes its collections through that API. The current screen integration stores records as JSONB payloads in `pms_app_data`; it does not yet map them to the normalized tables below. The SQL and MongoDB examples in this section are schema/design guidance only: normalized-table CRUD, MongoDB integration, and database migration scripts are not implemented.
 
 #### Step 1: Install & Create Database
 ```sql

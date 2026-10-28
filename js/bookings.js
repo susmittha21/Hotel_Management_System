@@ -2,7 +2,14 @@
  * VS PLAZA PMS - BOOKING & CHECK-IN CONTROLLER
  */
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize bookings from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   renderBookingsTable();
   setupBookingForm();
   setupDateCalculations();
@@ -138,7 +145,7 @@ function setupBookingForm() {
   if (checkInEl && !checkInEl.value) checkInEl.value = today;
   if (checkOutEl && !checkOutEl.value) checkOutEl.value = tomorrow;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     const guestName = document.getElementById('bookingGuestName').value.trim();
@@ -181,7 +188,7 @@ function setupBookingForm() {
         status: immediateCheckIn ? 'In-House' : 'Reserved'
       };
       guests.push(guest);
-      HotelStore.saveGuests(guests);
+      if (await HotelStore.saveGuests(guests) === false) return;
     }
 
     const bookingSource = document.getElementById('bookingSource') ? document.getElementById('bookingSource').value : 'Walk-In';
@@ -204,14 +211,14 @@ function setupBookingForm() {
     };
 
     bookings.unshift(newBooking);
-    HotelStore.saveBookings(bookings);
+    if (await HotelStore.saveBookings(bookings) === false) return;
 
     // Update Room state
     const room = rooms.find(r => r.roomNo === roomNo);
     if (room) {
       room.status = immediateCheckIn ? 'Occupied' : 'Reserved';
       room.currentGuest = guestName;
-      HotelStore.saveRooms(rooms);
+      if (await HotelStore.saveRooms(rooms) === false) return;
     }
 
     showToast(`Reservation #${bookingId} created for ${guestName}!`, 'success');
@@ -222,7 +229,7 @@ function setupBookingForm() {
   });
 }
 
-function performCheckIn(bookingId) {
+async function performCheckIn(bookingId) {
   const bookings = HotelStore.getBookings();
   const rooms = HotelStore.getRooms();
 
@@ -230,20 +237,20 @@ function performCheckIn(bookingId) {
   if (!b) return;
 
   b.status = 'Checked-In';
-  HotelStore.saveBookings(bookings);
+  if (await HotelStore.saveBookings(bookings) === false) return;
 
   const room = rooms.find(r => r.roomNo === b.roomNo);
   if (room) {
     room.status = 'Occupied';
     room.currentGuest = b.guestName;
-    HotelStore.saveRooms(rooms);
+    if (await HotelStore.saveRooms(rooms) === false) return;
   }
 
   showToast(`Guest ${b.guestName} is now Checked In to Room ${b.roomNo}.`, 'success');
   renderBookingsTable();
 }
 
-function performCheckOut(bookingId) {
+async function performCheckOut(bookingId) {
   const bookings = HotelStore.getBookings();
   const rooms = HotelStore.getRooms();
 
@@ -252,20 +259,20 @@ function performCheckOut(bookingId) {
 
   b.status = 'Checked-Out';
   b.paymentStatus = 'Paid';
-  HotelStore.saveBookings(bookings);
+  if (await HotelStore.saveBookings(bookings) === false) return;
 
   const room = rooms.find(r => r.roomNo === b.roomNo);
   if (room) {
     room.status = 'Cleaning';
     delete room.currentGuest;
-    HotelStore.saveRooms(rooms);
+    if (await HotelStore.saveRooms(rooms) === false) return;
   }
 
   showToast(`Folio finalized. Guest ${b.guestName} checked out successfully.`, 'info');
   renderBookingsTable();
 }
 
-function cancelBooking(bookingId) {
+async function cancelBooking(bookingId) {
   if (!confirm(`Are you sure you want to cancel booking #${bookingId}?`)) return;
 
   const bookings = HotelStore.getBookings();
@@ -275,13 +282,13 @@ function cancelBooking(bookingId) {
   if (!b) return;
 
   b.status = 'Cancelled';
-  HotelStore.saveBookings(bookings);
+  if (await HotelStore.saveBookings(bookings) === false) return;
 
   const room = rooms.find(r => r.roomNo === b.roomNo);
   if (room && room.status === 'Reserved') {
     room.status = 'Available';
     delete room.currentGuest;
-    HotelStore.saveRooms(rooms);
+    if (await HotelStore.saveRooms(rooms) === false) return;
   }
 
   showToast(`Booking #${bookingId} marked as Cancelled.`, 'error');

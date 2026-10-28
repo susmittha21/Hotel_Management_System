@@ -2,7 +2,14 @@
  * VS PLAZA PMS - GUEST DIRECTORY CONTROLLER
  */
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize guests from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   renderGuestDirectory();
   setupNewGuestForm();
 
@@ -117,7 +124,7 @@ function setupNewGuestForm() {
   const form = document.getElementById('newGuestForm');
   if (!form) return;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     const firstName = document.getElementById('guestFirstName').value.trim();
@@ -153,7 +160,7 @@ function setupNewGuestForm() {
       status: 'Registered'
     });
 
-    HotelStore.saveGuests(guests);
+    if (await HotelStore.saveGuests(guests) === false) return;
     showToast(`Guest profile created for ${firstName} ${lastName}!`, 'success');
     form.reset();
     closeModal('newGuestModal');

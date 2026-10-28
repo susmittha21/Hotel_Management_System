@@ -1,4 +1,11 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize housekeeping from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   renderHousekeepingTable();
   setupHousekeepingForm();
 });
@@ -30,7 +37,7 @@ function setupHousekeepingForm() {
   const form = document.getElementById('newHousekeepingForm');
   if (!form) return;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const task = {
       taskId: `HK-${Date.now().toString().slice(-5)}`,
@@ -43,7 +50,7 @@ function setupHousekeepingForm() {
 
     const tasks = HotelStore.getHousekeeping();
     tasks.push(task);
-    HotelStore.saveHousekeeping(tasks);
+    if (await HotelStore.saveHousekeeping(tasks) === false) return;
     form.reset();
     closeModal('newTaskModal');
     renderHousekeepingTable();
@@ -51,7 +58,7 @@ function setupHousekeepingForm() {
   });
 }
 
-function updateHousekeepingStatus(taskId) {
+async function updateHousekeepingStatus(taskId) {
   const tasks = HotelStore.getHousekeeping();
   const updated = tasks.map(task => {
     if (task.taskId === taskId) {
@@ -59,6 +66,6 @@ function updateHousekeepingStatus(taskId) {
     }
     return task;
   });
-  HotelStore.saveHousekeeping(updated);
+  if (await HotelStore.saveHousekeeping(updated) === false) return;
   renderHousekeepingTable();
 }

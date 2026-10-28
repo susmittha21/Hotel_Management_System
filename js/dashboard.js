@@ -3,7 +3,14 @@
  * Real-time hotel operations KPIs, today's arrivals & departures, room availability summary
  */
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize dashboard from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   renderDashboardMetrics();
   renderArrivalsTable();
   renderDeparturesTable();
@@ -131,7 +138,7 @@ function renderQuickRoomStatus() {
   }).join('');
 }
 
-function quickCheckIn(bookingId) {
+async function quickCheckIn(bookingId) {
   const bookings = HotelStore.getBookings();
   const rooms = HotelStore.getRooms();
 
@@ -139,14 +146,14 @@ function quickCheckIn(bookingId) {
   if (!booking) return;
 
   booking.status = 'Checked-In';
-  HotelStore.saveBookings(bookings);
+  if (await HotelStore.saveBookings(bookings) === false) return;
 
   // Update room status to Occupied
   const room = rooms.find(r => r.roomNo === booking.roomNo);
   if (room) {
     room.status = 'Occupied';
     room.currentGuest = booking.guestName;
-    HotelStore.saveRooms(rooms);
+    if (await HotelStore.saveRooms(rooms) === false) return;
   }
 
   showToast(`Guest ${booking.guestName} successfully checked into Room ${booking.roomNo}!`, 'success');
@@ -155,21 +162,21 @@ function quickCheckIn(bookingId) {
   renderDeparturesTable();
 }
 
-function quickCheckOut(bookingId, roomNo) {
+async function quickCheckOut(bookingId, roomNo) {
   const bookings = HotelStore.getBookings();
   const rooms = HotelStore.getRooms();
 
   const booking = bookings.find(b => b.bookingId === bookingId);
   if (booking) {
     booking.status = 'Checked-Out';
-    HotelStore.saveBookings(bookings);
+    if (await HotelStore.saveBookings(bookings) === false) return;
   }
 
   const room = rooms.find(r => r.roomNo === roomNo);
   if (room) {
     room.status = 'Cleaning';
     delete room.currentGuest;
-    HotelStore.saveRooms(rooms);
+    if (await HotelStore.saveRooms(rooms) === false) return;
   }
 
   showToast(`Folio finalized. Room ${roomNo} marked for Housekeeping.`, 'info');

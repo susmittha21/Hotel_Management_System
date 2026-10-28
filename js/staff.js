@@ -1,4 +1,11 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize staff from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   populateDepartmentOptions();
   renderStaffTable();
   setupStaffForm();
@@ -57,7 +64,7 @@ function setupStaffForm() {
   const form = document.getElementById('newStaffForm');
   if (!form) return;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const firstName = document.getElementById('staffFirstName').value.trim();
     const lastName = document.getElementById('staffLastName').value.trim();
@@ -81,7 +88,7 @@ function setupStaffForm() {
       salary
     });
 
-    HotelStore.saveStaff(staff);
+    if (await HotelStore.saveStaff(staff) === false) return;
     form.reset();
     closeModal('newStaffModal');
     renderStaffTable();
@@ -89,10 +96,10 @@ function setupStaffForm() {
   });
 }
 
-function removeStaff(staffId) {
+async function removeStaff(staffId) {
   const staff = HotelStore.getStaff();
   const updated = staff.filter(s => s.staffId !== staffId);
-  HotelStore.saveStaff(updated);
+  if (await HotelStore.saveStaff(updated) === false) return;
   renderStaffTable();
   showToast(`Staff ${staffId} removed.`, 'info');
 }

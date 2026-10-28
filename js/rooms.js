@@ -6,7 +6,14 @@ let currentFilterStatus = 'ALL';
 let currentFilterFloor = 'ALL';
 let currentSearchQuery = '';
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await HotelStore.initialize();
+  } catch (error) {
+    console.error('Unable to initialize room management from PostgreSQL.', error);
+    showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
+    return;
+  }
   renderRoomGrid();
   setupFilterListeners();
   setupAddRoomForm();
@@ -118,7 +125,7 @@ function openRoomActionModal(roomNo) {
   openModal('roomActionModal');
 }
 
-function updateRoomDetailsFromModal() {
+async function updateRoomDetailsFromModal() {
   const roomNo = document.getElementById('hiddenTargetRoomNo').value;
   const newStatus = document.getElementById('actionRoomStatus').value;
   const newPrice = Number(document.getElementById('actionRoomPrice').value);
@@ -133,7 +140,7 @@ function updateRoomDetailsFromModal() {
     if (newStatus !== 'Occupied') {
       delete room.currentGuest;
     }
-    HotelStore.saveRooms(rooms);
+    if (await HotelStore.saveRooms(rooms) === false) return;
     showToast(`Room ${roomNo} updated to "${newStatus}"!`, 'success');
     closeModal('roomActionModal');
     renderRoomGrid();
@@ -144,7 +151,7 @@ function setupAddRoomForm() {
   const form = document.getElementById('newRoomForm');
   if (!form) return;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const roomNo = document.getElementById('addRoomNo').value.trim();
     const type = document.getElementById('addRoomType').value;
@@ -174,7 +181,7 @@ function setupAddRoomForm() {
       amenities: amenities || 'Standard Hotel Amenities'
     });
 
-    HotelStore.saveRooms(rooms);
+    if (await HotelStore.saveRooms(rooms) === false) return;
     showToast(`Room ${roomNo} added to inventory successfully!`, 'success');
     form.reset();
     closeModal('addRoomModal');
