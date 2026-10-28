@@ -205,7 +205,7 @@ function setupBookingForm() {
       guestsCount,
       totalAmount,
       status: immediateCheckIn ? 'Checked-In' : 'Confirmed',
-      paymentStatus: immediateCheckIn ? 'Paid' : 'Pending',
+      paymentStatus: 'Pending',
       bookingSource,
       specialRequests
     };
@@ -258,7 +258,6 @@ async function performCheckOut(bookingId) {
   if (!b) return;
 
   b.status = 'Checked-Out';
-  b.paymentStatus = 'Paid';
   if (await HotelStore.saveBookings(bookings) === false) return;
 
   const room = rooms.find(r => r.roomNo === b.roomNo);

@@ -195,7 +195,19 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
             SELECT b.booking_id, b.guest_id, g.first_name || ' ' || g.last_name AS guest_name,
                    r.room_number, b.booking_date, b.check_in_date, b.check_out_date,
                    b.number_of_guests, b.booking_status, b.booking_source,
-                   b.special_requests, b.total_tariff
+                   b.special_requests, b.total_tariff,
+                   CASE
+                       WHEN EXISTS (
+                           SELECT 1 FROM "{schema}".invoice i
+                           JOIN "{schema}".payment p ON p.invoice_id=i.invoice_id
+                           WHERE i.booking_id=b.booking_id AND i.invoice_status='Paid'
+                       ) THEN 'Paid'
+                       WHEN EXISTS (
+                           SELECT 1 FROM "{schema}".invoice i
+                           WHERE i.booking_id=b.booking_id AND i.invoice_status='Partially Paid'
+                       ) THEN 'Partially Paid'
+                       ELSE 'Pending'
+                   END AS payment_status
             FROM "{schema}".booking b
             JOIN "{schema}".guest g ON g.guest_id = b.guest_id
             JOIN "{schema}".room r ON r.room_id = b.room_id
@@ -345,7 +357,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "bookingSource": row["booking_source"],
                     "specialRequests": row["special_requests"],
                     "totalAmount": row["total_tariff"],
-                    "paymentStatus": "Paid" if row["booking_status"] == "Checked-Out" else "Pending",
+                    "paymentStatus": row["payment_status"],
                 }
             )
             for row in bookings
