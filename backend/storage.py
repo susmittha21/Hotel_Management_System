@@ -1,5 +1,6 @@
 import re
 from datetime import date
+from hashlib import sha256
 from typing import Any
 
 from sqlalchemy import text
@@ -22,6 +23,8 @@ def ensure_extension_tables(connection: Connection, schema: str) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS "{schema}".food_order (
             order_code VARCHAR(40) PRIMARY KEY,
+            guest_id VARCHAR(20) REFERENCES "{schema}".guest(guest_id) ON DELETE SET NULL,
+            item_code VARCHAR(40) NOT NULL REFERENCES "{schema}".food_menu(item_code) ON DELETE RESTRICT,
             guest_name VARCHAR(150) NOT NULL,
             item_name VARCHAR(100) NOT NULL,
             quantity INTEGER NOT NULL CHECK (quantity > 0),
@@ -38,23 +41,124 @@ def ensure_extension_tables(connection: Connection, schema: str) -> None:
         )
         """,
         f"""
-        CREATE TABLE IF NOT EXISTS "{schema}".guest_review (
-            review_code VARCHAR(40) PRIMARY KEY,
-            guest_name VARCHAR(150) NOT NULL,
-            booking_id VARCHAR(20) NOT NULL,
+        CREATE TABLE IF NOT EXISTS "{schema}".review (
+            review_id SERIAL PRIMARY KEY,
+            review_code VARCHAR(40),
+            booking_id VARCHAR(20) REFERENCES "{schema}".booking(booking_id) ON DELETE RESTRICT,
+            guest_id VARCHAR(20) REFERENCES "{schema}".guest(guest_id) ON DELETE SET NULL,
+            room_id INTEGER REFERENCES "{schema}".room(room_id) ON DELETE SET NULL,
             rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
-            comment TEXT
+            cleanliness_rating INTEGER CHECK (cleanliness_rating BETWEEN 1 AND 5),
+            service_rating INTEGER CHECK (service_rating BETWEEN 1 AND 5),
+            review_comments TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """,
+        f'ALTER TABLE "{schema}".review ADD COLUMN IF NOT EXISTS review_code VARCHAR(40)',
+        f'UPDATE "{schema}".review SET review_code=\'LEGACY-REVIEW-\' || review_id WHERE review_code IS NULL',
+        f'CREATE UNIQUE INDEX IF NOT EXISTS review_code_uq ON "{schema}".review (review_code)',
+        f'ALTER TABLE "{schema}".payment ADD COLUMN IF NOT EXISTS invoice_id VARCHAR(20) '
+        f'REFERENCES "{schema}".invoice(invoice_id) ON DELETE RESTRICT',
         f'ALTER TABLE "{schema}".housekeeping ADD COLUMN IF NOT EXISTS task_code VARCHAR(40)',
         f'ALTER TABLE "{schema}".housekeeping ADD COLUMN IF NOT EXISTS assigned_staff_label VARCHAR(100)',
+        f'UPDATE "{schema}".housekeeping SET task_code=\'LEGACY-HK-\' || task_id WHERE task_code IS NULL',
         f'CREATE UNIQUE INDEX IF NOT EXISTS housekeeping_task_code_uq ON "{schema}".housekeeping (task_code)',
         f'ALTER TABLE "{schema}".maintenance ADD COLUMN IF NOT EXISTS issue_code VARCHAR(40)',
         f'ALTER TABLE "{schema}".maintenance ADD COLUMN IF NOT EXISTS assigned_staff_label VARCHAR(100)',
+        f'UPDATE "{schema}".maintenance SET issue_code=\'LEGACY-MI-\' || issue_id WHERE issue_code IS NULL',
         f'CREATE UNIQUE INDEX IF NOT EXISTS maintenance_issue_code_uq ON "{schema}".maintenance (issue_code)',
     ]
     for statement in statements:
         connection.execute(text(statement))
+    _ensure_check_in_out_table(connection, schema)
+    _migrate_legacy_json_data(connection, schema)
+
+
+def _ensure_check_in_out_table(connection: Connection, schema: str) -> None:
+    for table in ("check_in_out", "check_in_check_out"):
+        found = connection.execute(
+            text("SELECT to_regclass(:table_name)"),
+            {"table_name": f'"{schema}".{table}'},
+        ).scalar_one()
+        if found is not None:
+            return
+    connection.execute(
+        text(
+            f"""
+            CREATE TABLE "{schema}".check_in_out (
+                stay_id SERIAL PRIMARY KEY,
+                booking_id VARCHAR(20) REFERENCES "{schema}".booking(booking_id),
+                actual_check_in TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                actual_check_out TIMESTAMP,
+                key_card_number VARCHAR(20),
+                front_desk_staff_id VARCHAR(20)
+            )
+            """
+        )
+    )
+
+
+def _migrate_legacy_json_data(connection: Connection, schema: str) -> None:
+    legacy_table = f'"{schema}".pms_app_data'
+    exists = connection.execute(
+        text("SELECT to_regclass(:table_name)"),
+        {"table_name": legacy_table},
+    ).scalar_one()
+    if exists is None:
+        return
+
+    connection.execute(
+        text(
+            f"""
+            CREATE TABLE IF NOT EXISTS "{schema}".hotel_app_migrations (
+                migration_key VARCHAR(100) PRIMARY KEY,
+                completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    migration_key = "pms-json-to-relational-v1"
+    if connection.execute(
+        text(f'SELECT 1 FROM "{schema}".hotel_app_migrations WHERE migration_key=:key'),
+        {"key": migration_key},
+    ).first():
+        return
+
+    legacy_rows = connection.execute(
+        text(f'SELECT collection, payload FROM {legacy_table} ORDER BY collection, record_id')
+    ).mappings()
+    legacy: dict[str, list[dict[str, Any]]] = {}
+    for row in legacy_rows:
+        payload = row["payload"]
+        if not isinstance(payload, dict):
+            raise ValueError(f"Legacy PostgreSQL data for {row['collection']} is not a JSON object.")
+        legacy.setdefault(row["collection"], []).append(payload)
+
+    targets = {
+        "rooms": ("room", "room_number"),
+        "guests": ("guest", "guest_id"),
+        "departments": ("department", "department_id"),
+        "staff": ("staff", "staff_id"),
+        "bookings": ("booking", "booking_id"),
+        "housekeeping": ("housekeeping", "task_code"),
+        "maintenance": ("maintenance", "issue_code"),
+        "invoices": ("invoice", "invoice_id"),
+        "food_menu": ("food_menu", "item_code"),
+        "food_orders": ("food_order", "order_code"),
+        "services": ("hotel_service", "service_code"),
+        "reviews": ("review", "review_code"),
+    }
+    for collection, (table, id_column) in targets.items():
+        if legacy.get(collection) and not _existing_ids(connection, schema, table, id_column):
+            replace_collection(connection, schema, collection, legacy[collection])
+
+    connection.execute(
+        text(
+            f'INSERT INTO "{schema}".hotel_app_migrations (migration_key) VALUES (:key) '
+            "ON CONFLICT (migration_key) DO NOTHING"
+        ),
+        {"key": migration_key},
+    )
 
 
 def read_collections(connection: Connection, schema: str) -> dict[str, list[dict[str, Any]]]:
@@ -153,11 +257,12 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
             f"""
             SELECT i.invoice_id, i.booking_id, g.first_name || ' ' || g.last_name AS guest_name,
                    r.room_number, i.room_charges, i.service_charges, i.tax_amount,
-                   i.discount, i.total_amount, i.invoice_status
+                   i.discount, i.total_amount, i.invoice_status, p.payment_method
             FROM "{schema}".invoice i
             LEFT JOIN "{schema}".booking b ON b.booking_id = i.booking_id
             LEFT JOIN "{schema}".guest g ON g.guest_id = b.guest_id
             LEFT JOIN "{schema}".room r ON r.room_id = b.room_id
+            LEFT JOIN "{schema}".payment p ON p.invoice_id = i.invoice_id
             ORDER BY i.invoice_date DESC, i.invoice_id
             """
         )
@@ -177,8 +282,11 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
     ).mappings()
     reviews = connection.execute(
         text(
-            f'SELECT review_code, guest_name, booking_id, rating, comment '
-            f'FROM "{schema}".guest_review ORDER BY review_code'
+            f'SELECT rv.review_code, guest.first_name || \' \' || guest.last_name AS guest_name, '
+            f'rv.booking_id, rv.rating, rv.review_comments '
+            f'FROM "{schema}".review rv '
+            f'LEFT JOIN "{schema}".guest guest ON guest.guest_id=rv.guest_id '
+            f'ORDER BY rv.created_at DESC, rv.review_id'
         )
     ).mappings()
 
@@ -305,6 +413,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "discount": row["discount"],
                     "total": row["total_amount"],
                     "status": "Pending" if row["invoice_status"] == "Unpaid" else row["invoice_status"],
+                    "paymentMethod": row["payment_method"],
                 }
             )
             for row in invoices
@@ -346,7 +455,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "guestName": row["guest_name"],
                     "bookingId": row["booking_id"],
                     "rating": row["rating"],
-                    "comment": row["comment"],
+                    "comment": row["review_comments"],
                 }
             )
             for row in reviews
@@ -402,10 +511,10 @@ def _save_rooms(connection: Connection, schema: str, records: list[dict[str, Any
         values = {
             "room_number": number,
             "room_type_id": room_type_id,
-            "floor": record.get("floor") or 1,
+            "floor": int(record.get("floor") or 1),
             "status": record.get("status") or "Available",
             "price": record.get("price") or 0,
-            "capacity": record.get("capacity") or 1,
+            "capacity": int(record.get("capacity") or 1),
             "smoking": bool(record.get("smokingAllowed", False)),
             "view": record.get("viewType"),
             "amenities": record.get("amenities"),
@@ -456,7 +565,7 @@ def _save_guests(connection: Connection, schema: str, records: list[dict[str, An
             connection.execute(
                 text(
                     f'UPDATE "{schema}".guest SET first_name=:first, last_name=:last, gender=:gender, '
-                    "date_of_birth=:dob, phone_number=:phone, email=:email, address=:address, city=:city, "
+                    "date_of_birth=CAST(:dob AS DATE), phone_number=:phone, email=:email, address=:address, city=:city, "
                     "state=:state, country=:country, id_type=:id_type, id_number=:id_number WHERE guest_id=:id"
                 ),
                 values,
@@ -466,7 +575,7 @@ def _save_guests(connection: Connection, schema: str, records: list[dict[str, An
                 text(
                     f'INSERT INTO "{schema}".guest (guest_id, first_name, last_name, gender, date_of_birth, '
                     "phone_number, email, address, city, state, country, id_type, id_number) "
-                    "VALUES (:id, :first, :last, :gender, :dob, :phone, :email, :address, :city, :state, "
+                    "VALUES (:id, :first, :last, :gender, CAST(:dob AS DATE), :phone, :email, :address, :city, :state, "
                     ":country, :id_type, :id_number)"
                 ),
                 values,
@@ -503,8 +612,8 @@ def _save_bookings(connection: Connection, schema: str, records: list[dict[str, 
             connection.execute(
                 text(
                     f'UPDATE "{schema}".booking SET guest_id=:guest_id, room_id=:room_id, '
-                    "booking_date=CAST(:booking_date AS TIMESTAMP), check_in_date=:check_in, "
-                    "check_out_date=:check_out, number_of_guests=:guests, booking_status=:status, "
+                    "booking_date=CAST(:booking_date AS TIMESTAMP), check_in_date=CAST(:check_in AS DATE), "
+                    "check_out_date=CAST(:check_out AS DATE), number_of_guests=:guests, booking_status=:status, "
                     "booking_source=:source, special_requests=:requests, total_tariff=:tariff "
                     "WHERE booking_id=:id"
                 ),
@@ -516,7 +625,8 @@ def _save_bookings(connection: Connection, schema: str, records: list[dict[str, 
                     f'INSERT INTO "{schema}".booking (booking_id, guest_id, room_id, booking_date, '
                     "check_in_date, check_out_date, number_of_guests, booking_status, booking_source, "
                     "special_requests, total_tariff) VALUES (:id, :guest_id, :room_id, "
-                    "CAST(:booking_date AS TIMESTAMP), :check_in, :check_out, :guests, :status, :source, :requests, :tariff)"
+                    "CAST(:booking_date AS TIMESTAMP), CAST(:check_in AS DATE), CAST(:check_out AS DATE), "
+                    ":guests, :status, :source, :requests, :tariff)"
                 ),
                 values,
             )
@@ -526,15 +636,16 @@ def _save_bookings(connection: Connection, schema: str, records: list[dict[str, 
 
 
 def _update_stay(connection: Connection, schema: str, booking_id: str, status: str) -> None:
+    table = _check_in_out_table(connection, schema)
     stay_id = connection.execute(
-        text(f'SELECT stay_id FROM "{schema}".check_in_out WHERE booking_id=:id ORDER BY stay_id LIMIT 1'),
+        text(f'SELECT stay_id FROM "{schema}".{table} WHERE booking_id=:id ORDER BY stay_id LIMIT 1'),
         {"id": booking_id},
     ).scalar_one_or_none()
     if stay_id is None:
         if status == "Checked-Out":
             connection.execute(
                 text(
-                    f'INSERT INTO "{schema}".check_in_out (booking_id, actual_check_in, actual_check_out) '
+                    f'INSERT INTO "{schema}".{table} (booking_id, actual_check_in, actual_check_out) '
                     "VALUES (:id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
                 ),
                 {"id": booking_id},
@@ -542,16 +653,27 @@ def _update_stay(connection: Connection, schema: str, booking_id: str, status: s
         else:
             connection.execute(
                 text(
-                    f'INSERT INTO "{schema}".check_in_out (booking_id, actual_check_in) '
+                    f'INSERT INTO "{schema}".{table} (booking_id, actual_check_in) '
                     "VALUES (:id, CURRENT_TIMESTAMP)"
                 ),
                 {"id": booking_id},
             )
     elif status == "Checked-Out":
         connection.execute(
-            text(f'UPDATE "{schema}".check_in_out SET actual_check_out=CURRENT_TIMESTAMP WHERE stay_id=:stay_id'),
+            text(f'UPDATE "{schema}".{table} SET actual_check_out=CURRENT_TIMESTAMP WHERE stay_id=:stay_id'),
             {"stay_id": stay_id},
         )
+
+
+def _check_in_out_table(connection: Connection, schema: str) -> str:
+    for table in ("check_in_out", "check_in_check_out"):
+        exists = connection.execute(
+            text("SELECT to_regclass(:table_name)"),
+            {"table_name": f'"{schema}".{table}'},
+        ).scalar_one()
+        if exists is not None:
+            return table
+    raise ValueError("Neither CHECK_IN_OUT nor CHECK_IN_CHECK_OUT table exists.")
 
 
 def _save_departments(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
@@ -708,6 +830,7 @@ def _save_invoices(connection: Connection, schema: str, records: list[dict[str, 
         invoice_id = str(record["invoiceId"])
         retained.add(invoice_id)
         status = record.get("status") or "Pending"
+        database_status = "Unpaid" if status == "Pending" else status
         values = {
             "id": invoice_id,
             "booking_id": str(record.get("bookingId") or ""),
@@ -716,7 +839,7 @@ def _save_invoices(connection: Connection, schema: str, records: list[dict[str, 
             "tax": record.get("taxAmount") or 0,
             "discount": record.get("discount") or 0,
             "total": record.get("total") or 0,
-            "status": "Unpaid" if status == "Pending" else status,
+            "status": database_status,
         }
         if invoice_id in existing:
             connection.execute(
@@ -736,6 +859,31 @@ def _save_invoices(connection: Connection, schema: str, records: list[dict[str, 
                 ),
                 values,
             )
+        if database_status == "Paid":
+            method = record.get("paymentMethod")
+            valid_methods = {"Cash", "Credit Card", "Debit Card", "UPI", "Net Banking"}
+            if method not in valid_methods:
+                raise ValueError(f"A valid payment method is required to settle invoice {invoice_id}.")
+            payment_id = f"PAY-{sha256(invoice_id.encode('utf-8')).hexdigest()[:16]}"
+            payment = {
+                "payment_id": payment_id,
+                "invoice_id": invoice_id,
+                "booking_id": values["booking_id"],
+                "amount": values["total"],
+                "method": method,
+            }
+            connection.execute(
+                text(
+                    f'INSERT INTO "{schema}".payment '
+                    "(payment_id, invoice_id, booking_id, amount, payment_method, payment_status) "
+                    "VALUES (:payment_id, :invoice_id, :booking_id, :amount, :method, 'Completed') "
+                    "ON CONFLICT (payment_id) DO UPDATE SET invoice_id=EXCLUDED.invoice_id, "
+                    "booking_id=EXCLUDED.booking_id, "
+                    "amount=EXCLUDED.amount, payment_method=EXCLUDED.payment_method, "
+                    "payment_status='Completed'"
+                ),
+                payment,
+            )
     _delete_missing(connection, schema, "invoice", "invoice_id", retained)
 
 
@@ -748,13 +896,55 @@ def _save_food_menu(connection: Connection, schema: str, records: list[dict[str,
 
 
 def _save_food_orders(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
-    _save_simple_table(connection, schema, "food_order", "order_code", "orderId", records, {
-        "guest_name": lambda record: record.get("guestName") or "Guest",
-        "item_name": lambda record: record.get("item") or "Unknown",
-        "quantity": lambda record: record.get("quantity") or 1,
-        "total": lambda record: record.get("total") or 0,
-        "status": lambda record: record.get("status") or "Pending",
-    })
+    existing = _existing_ids(connection, schema, "food_order", "order_code")
+    retained = set()
+    for record in records:
+        code = str(record["orderId"])
+        retained.add(code)
+        item = str(record.get("item") or "")
+        item_code = connection.execute(
+            text(f'SELECT item_code FROM "{schema}".food_menu WHERE name=:name ORDER BY item_code LIMIT 1'),
+            {"name": item},
+        ).scalar_one_or_none()
+        if item_code is None:
+            raise ValueError(f"Food menu item {item} does not exist.")
+        guest_name = record.get("guestName") or "Guest"
+        guest_id = connection.execute(
+            text(
+                f'SELECT guest_id FROM "{schema}".guest '
+                "WHERE first_name || ' ' || last_name=:name ORDER BY guest_id LIMIT 1"
+            ),
+            {"name": guest_name},
+        ).scalar_one_or_none()
+        values = {
+            "code": code,
+            "guest_id": guest_id,
+            "item_code": item_code,
+            "guest_name": guest_name,
+            "item_name": item,
+            "quantity": int(record.get("quantity") or 1),
+            "total": record.get("total") or 0,
+            "status": record.get("status") or "Pending",
+        }
+        if code in existing:
+            connection.execute(
+                text(
+                    f'UPDATE "{schema}".food_order SET guest_id=:guest_id, item_code=:item_code, '
+                    "guest_name=:guest_name, item_name=:item_name, quantity=:quantity, total=:total, "
+                    "status=:status WHERE order_code=:code"
+                ),
+                values,
+            )
+        else:
+            connection.execute(
+                text(
+                    f'INSERT INTO "{schema}".food_order '
+                    "(order_code, guest_id, item_code, guest_name, item_name, quantity, total, status) "
+                    "VALUES (:code, :guest_id, :item_code, :guest_name, :item_name, :quantity, :total, :status)"
+                ),
+                values,
+            )
+    _delete_missing(connection, schema, "food_order", "order_code", retained)
 
 
 def _save_services(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
@@ -766,12 +956,46 @@ def _save_services(connection: Connection, schema: str, records: list[dict[str, 
 
 
 def _save_reviews(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
-    _save_simple_table(connection, schema, "guest_review", "review_code", "reviewId", records, {
-        "guest_name": lambda record: record.get("guestName") or "Guest",
-        "booking_id": lambda record: record.get("bookingId") or "",
-        "rating": lambda record: record.get("rating") or 5,
-        "comment": lambda record: record.get("comment"),
-    })
+    existing = _existing_ids(connection, schema, "review", "review_code")
+    retained = set()
+    for record in records:
+        code = str(record["reviewId"])
+        retained.add(code)
+        booking_id = str(record.get("bookingId") or "")
+        booking = connection.execute(
+            text(f'SELECT guest_id, room_id FROM "{schema}".booking WHERE booking_id=:id'),
+            {"id": booking_id},
+        ).mappings().one_or_none()
+        if booking is None:
+            raise ValueError(f"Booking {booking_id} does not exist.")
+        values = {
+            "code": code,
+            "guest_id": booking["guest_id"],
+            "room_id": booking["room_id"],
+            "booking_id": booking_id,
+            "rating": int(record.get("rating") or 5),
+            "comment": record.get("comment"),
+        }
+        if code in existing:
+            connection.execute(
+                text(
+                    f'UPDATE "{schema}".review SET guest_id=:guest_id, room_id=:room_id, '
+                    "booking_id=:booking_id, rating=:rating, cleanliness_rating=:rating, "
+                    "service_rating=:rating, review_comments=:comment WHERE review_code=:code"
+                ),
+                values,
+            )
+        else:
+            connection.execute(
+                text(
+                    f'INSERT INTO "{schema}".review '
+                    "(review_code, guest_id, room_id, booking_id, rating, cleanliness_rating, "
+                    "service_rating, review_comments) VALUES (:code, :guest_id, :room_id, :booking_id, "
+                    ":rating, :rating, :rating, :comment)"
+                ),
+                values,
+            )
+    _delete_missing(connection, schema, "review", "review_code", retained)
 
 
 def _save_simple_table(

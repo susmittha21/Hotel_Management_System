@@ -59,8 +59,18 @@ function setupInvoiceForm() {
 }
 
 async function markInvoicePaid(invoiceId) {
+  const paymentMethod = prompt('Enter payment method: Cash, Credit Card, Debit Card, UPI, or Net Banking');
+  if (paymentMethod === null) return;
+  const acceptedMethods = ['Cash', 'Credit Card', 'Debit Card', 'UPI', 'Net Banking'];
+  if (!acceptedMethods.includes(paymentMethod.trim())) {
+    showToast('Choose Cash, Credit Card, Debit Card, UPI, or Net Banking.', 'error');
+    return;
+  }
+
   const invoices = HotelStore.getInvoices();
-  const updated = invoices.map(invoice => invoice.invoiceId === invoiceId ? { ...invoice, status: 'Paid' } : invoice);
+  const updated = invoices.map(invoice => invoice.invoiceId === invoiceId
+    ? { ...invoice, status: 'Paid', paymentMethod: paymentMethod.trim() }
+    : invoice);
   if (await HotelStore.saveInvoices(updated) === false) return;
   renderInvoicesTable();
 }

@@ -63,7 +63,7 @@ const ROLE_HOME_MODULE = {
   'Accounts Cashier': 'invoices'
 };
 
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
+const API_BASE_URL = (window.HOTEL_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
 const DATA_COLLECTIONS = {
   [STORAGE_KEYS.ROOMS]: 'rooms',
   [STORAGE_KEYS.GUESTS]: 'guests',

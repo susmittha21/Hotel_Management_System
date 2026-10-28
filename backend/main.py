@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-import json
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,8 @@ load_dotenv(ROOT_DIR / ".env")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+_schema_initialization_lock = threading.Lock()
+_initialized_schemas: set[str] = set()
 
 DATA_COLLECTIONS = {
     "rooms": "roomNo",
@@ -68,15 +70,32 @@ def get_engine():
     return create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 5})
 
 
+def ensure_database_schema(schema: str) -> None:
+    if schema in _initialized_schemas:
+        return
+    with _schema_initialization_lock:
+        if schema in _initialized_schemas:
+            return
+        with get_engine().begin() as connection:
+            ensure_extension_tables(connection, schema)
+        _initialized_schemas.add(schema)
+
+
 app = FastAPI(title="VS Plaza Hotel Management API", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+configured_origins = os.getenv("CORS_ORIGINS", "")
+allowed_origins = (
+    [origin.strip().rstrip("/") for origin in configured_origins.split(",") if origin.strip()]
+    if configured_origins
+    else [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5500",
         "http://127.0.0.1:5500",
-    ],
+    ]
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,8 +106,8 @@ app.add_middleware(
 def get_app_data():
     try:
         schema = database_settings()["schema"]
-        with get_engine().begin() as connection:
-            ensure_extension_tables(connection, schema)
+        ensure_database_schema(schema)
+        with get_engine().connect() as connection:
             return read_collections(connection, schema)
     except (SQLAlchemyError, RuntimeError, ValueError):
         logger.exception("Unable to load application data from PostgreSQL")
@@ -121,8 +140,8 @@ def replace_app_data(collection: str, records: list[dict[str, Any]]):
 
     try:
         schema = database_settings()["schema"]
+        ensure_database_schema(schema)
         with get_engine().begin() as connection:
-            ensure_extension_tables(connection, schema)
             saved = replace_collection(connection, schema, collection, records)
         return {"collection": collection, "saved": saved}
     except ValueError as error:
