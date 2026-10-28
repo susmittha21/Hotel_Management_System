@@ -307,7 +307,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
     ).mappings()
     orders = connection.execute(
         text(
-            f'SELECT order_code, guest_name, item_name, quantity, total, status '
+            f'SELECT order_code, guest_id, guest_name, item_name, quantity, total, status '
             f'FROM "{schema}".food_order ORDER BY order_code'
         )
     ).mappings()
