@@ -59,6 +59,7 @@ def ensure_extension_tables(connection: Connection, schema: str) -> None:
         f'CREATE UNIQUE INDEX IF NOT EXISTS review_code_uq ON "{schema}".review (review_code)',
         f'ALTER TABLE "{schema}".payment ADD COLUMN IF NOT EXISTS invoice_id VARCHAR(20) '
         f'REFERENCES "{schema}".invoice(invoice_id) ON DELETE RESTRICT',
+        f'DROP INDEX IF EXISTS "{schema}".payment_invoice_id_uq',
         f'ALTER TABLE "{schema}".housekeeping ADD COLUMN IF NOT EXISTS task_code VARCHAR(40)',
         f'ALTER TABLE "{schema}".housekeeping ADD COLUMN IF NOT EXISTS assigned_staff_label VARCHAR(100)',
         f'UPDATE "{schema}".housekeeping SET task_code=\'LEGACY-HK-\' || task_id WHERE task_code IS NULL',
