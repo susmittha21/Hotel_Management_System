@@ -10,7 +10,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import URL, create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+from backend.storage import ensure_extension_tables, read_collections, replace_collection
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
@@ -66,24 +68,6 @@ def get_engine():
     return create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 5})
 
 
-def ensure_app_data_table():
-    schema = database_settings()["schema"]
-    with get_engine().begin() as connection:
-        connection.execute(
-            text(
-                f"""
-                CREATE TABLE IF NOT EXISTS "{schema}"."pms_app_data" (
-                    collection VARCHAR(40) NOT NULL,
-                    record_id VARCHAR(100) NOT NULL,
-                    payload JSONB NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (collection, record_id)
-                )
-                """
-            )
-        )
-
-
 app = FastAPI(title="VS Plaza Hotel Management API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -102,25 +86,18 @@ app.add_middleware(
 @app.get("/api/data")
 def get_app_data():
     try:
-        ensure_app_data_table()
         schema = database_settings()["schema"]
-        with get_engine().connect() as connection:
-            rows = connection.execute(
-                text(
-                    f'SELECT collection, payload FROM "{schema}"."pms_app_data" '
-                    "ORDER BY collection, record_id"
-                )
-            ).mappings()
-            data = {collection: [] for collection in DATA_COLLECTIONS}
-            for row in rows:
-                if row["collection"] in data:
-                    data[row["collection"]].append(row["payload"])
-        return data
+        with get_engine().begin() as connection:
+            ensure_extension_tables(connection, schema)
+            return read_collections(connection, schema)
     except (SQLAlchemyError, RuntimeError, ValueError):
         logger.exception("Unable to load application data from PostgreSQL")
         raise HTTPException(
             status_code=503,
-            detail="Unable to load application data from PostgreSQL. Check the database connection and schema.",
+            detail=(
+                "Unable to load application data from PostgreSQL. Confirm the schema tables "
+                "from README.md exist and check the database connection."
+            ),
         ) from None
 
 
@@ -143,34 +120,22 @@ def replace_app_data(collection: str, records: list[dict[str, Any]]):
         raise HTTPException(status_code=409, detail=f"Duplicate {id_field} values are not allowed.")
 
     try:
-        ensure_app_data_table()
         schema = database_settings()["schema"]
         with get_engine().begin() as connection:
-            connection.execute(
-                text(
-                    f'DELETE FROM "{schema}"."pms_app_data" WHERE collection = :collection'
-                ),
-                {"collection": collection},
-            )
-            if records:
-                connection.execute(
-                    text(
-                        f"""
-                        INSERT INTO "{schema}"."pms_app_data"
-                            (collection, record_id, payload, updated_at)
-                        VALUES (:collection, :record_id, CAST(:payload AS JSONB), CURRENT_TIMESTAMP)
-                        """
-                    ),
-                    [
-                        {
-                            "collection": collection,
-                            "record_id": str(record[id_field]),
-                            "payload": json.dumps(record, ensure_ascii=False),
-                        }
-                        for record in records
-                    ],
-                )
-        return {"collection": collection, "saved": len(records)}
+            ensure_extension_tables(connection, schema)
+            saved = replace_collection(connection, schema, collection, records)
+        return {"collection": collection, "saved": saved}
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+    except IntegrityError:
+        logger.exception("PostgreSQL constraint rejected %s", collection)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"PostgreSQL rejected {collection}. Check required related records, "
+                "duplicate values, and the database constraints."
+            ),
+        ) from None
     except SQLAlchemyError:
         logger.exception("Unable to save %s to PostgreSQL", collection)
         raise HTTPException(
