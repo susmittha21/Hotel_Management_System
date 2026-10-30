@@ -80,7 +80,6 @@
           <select id="loginRole" class="form-control" required>
             <option value="Hotel Manager">Hotel Manager</option>
             <option value="Front Desk">Front Desk</option>
-            <option value="Operations Staff">Operations Staff</option>
             <option value="Accounts Cashier">Accounts Cashier</option>
           </select>
         </div>
@@ -139,7 +138,6 @@
         const startPage = {
           'Hotel Manager': 'dashboard',
           'Front Desk': 'dashboard',
-          'Operations Staff': 'housekeeping',
           'Accounts Cashier': 'invoices'
         }[authenticatedRole];
         window.location.href = `${startPage}.html`;

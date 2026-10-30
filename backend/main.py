@@ -28,10 +28,12 @@ from backend.mongo_store import (
     synchronize_collections,
 )
 from backend.storage import (
+    create_public_booking,
     create_invoice,
     dashboard_analytics,
     ensure_extension_tables,
     invoice_options,
+    public_available_rooms,
     read_collections,
     replace_collection,
     settle_invoice,
@@ -66,7 +68,6 @@ ROLE_MODULES = {
         "maintenance", "invoices", "food", "services", "reviews",
     },
     "Front Desk": {"dashboard", "rooms", "bookings", "guests"},
-    "Operations Staff": {"housekeeping", "maintenance", "food", "services", "reviews"},
     "Accounts Cashier": {"invoices"},
 }
 COLLECTION_ROLES = {
@@ -75,13 +76,13 @@ COLLECTION_ROLES = {
     "bookings": {"Hotel Manager", "Front Desk"},
     "departments": {"Hotel Manager"},
     "staff": {"Hotel Manager"},
-    "housekeeping": {"Hotel Manager", "Operations Staff"},
-    "maintenance": {"Hotel Manager", "Operations Staff"},
+    "housekeeping": {"Hotel Manager"},
+    "maintenance": {"Hotel Manager"},
     "invoices": {"Hotel Manager", "Accounts Cashier"},
-    "food_menu": {"Hotel Manager", "Operations Staff"},
-    "food_orders": {"Hotel Manager", "Operations Staff"},
-    "services": {"Hotel Manager", "Operations Staff"},
-    "reviews": {"Hotel Manager", "Operations Staff"},
+    "food_menu": {"Hotel Manager"},
+    "food_orders": {"Hotel Manager"},
+    "services": {"Hotel Manager"},
+    "reviews": {"Hotel Manager"},
 }
 SESSION_COOKIE = "vs_plaza_session"
 SESSION_MAX_AGE = 60 * 60 * 8
@@ -90,7 +91,7 @@ SESSION_MAX_AGE = 60 * 60 * 8
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=200)
-    role: Literal["Hotel Manager", "Front Desk", "Operations Staff", "Accounts Cashier"]
+    role: Literal["Hotel Manager", "Front Desk", "Accounts Cashier"]
     dbms: Literal["postgresql", "mongodb"]
 
 
@@ -102,6 +103,17 @@ class InvoiceRequest(BaseModel):
 
 class PaymentRequest(BaseModel):
     paymentMethod: str
+
+
+class PublicBookingRequest(BaseModel):
+    roomNo: str = Field(min_length=1, max_length=10)
+    guestName: str = Field(min_length=2, max_length=100)
+    phone: str = Field(min_length=5, max_length=20)
+    email: str | None = Field(default=None, max_length=100)
+    checkIn: date
+    checkOut: date
+    guestsCount: int = Field(ge=1, le=8)
+    specialRequests: str | None = Field(default=None, max_length=1000)
 
 
 def database_settings() -> dict[str, Any]:
@@ -270,7 +282,6 @@ def _configured_users() -> dict[str, tuple[str, str]]:
     config = {
         "Hotel Manager": ("PMS_MANAGER_USERNAME", "PMS_MANAGER_PASSWORD"),
         "Front Desk": ("PMS_FRONT_DESK_USERNAME", "PMS_FRONT_DESK_PASSWORD"),
-        "Operations Staff": ("PMS_OPERATIONS_USERNAME", "PMS_OPERATIONS_PASSWORD"),
         "Accounts Cashier": ("PMS_ACCOUNTS_USERNAME", "PMS_ACCOUNTS_PASSWORD"),
     }
     users = {}
@@ -383,6 +394,70 @@ def login(credentials: LoginRequest, request: Request, response: Response):
         path="/",
     )
     return {"username": username, "role": credentials.role, "dbms": credentials.dbms}
+
+
+@app.get("/api/public/availability")
+def get_public_availability(
+    request: Request,
+    check_in: date,
+    check_out: date,
+    guests_count: int = 1,
+    room_type: str | None = None,
+):
+    _verify_origin(request)
+    if check_in < date.today() or check_out <= check_in:
+        raise HTTPException(status_code=422, detail="Choose a future check-in date and a later check-out date.")
+    if not 1 <= guests_count <= 8:
+        raise HTTPException(status_code=422, detail="Guest count must be between 1 and 8.")
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().connect() as connection:
+                rooms = public_available_rooms(
+                    connection, schema, check_in, check_out, guests_count, room_type or None
+                )
+        return {"rooms": rooms}
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to load public room availability")
+        raise HTTPException(status_code=503, detail="Unable to check room availability right now.") from None
+
+
+@app.post("/api/public/bookings", status_code=201)
+def create_website_booking(payload: PublicBookingRequest, request: Request):
+    _verify_origin(request)
+    if payload.checkIn < date.today() or payload.checkOut <= payload.checkIn:
+        raise HTTPException(status_code=422, detail="Choose a future check-in date and a later check-out date.")
+    name_parts = payload.guestName.split()
+    if len(name_parts) < 2:
+        raise HTTPException(status_code=422, detail="Enter your first and last name.")
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                booking = create_public_booking(
+                    connection,
+                    schema,
+                    room_number=payload.roomNo,
+                    guest_name=payload.guestName,
+                    phone=payload.phone,
+                    email=payload.email,
+                    check_in=payload.checkIn,
+                    check_out=payload.checkOut,
+                    guests_count=payload.guestsCount,
+                    special_requests=payload.specialRequests,
+                )
+            booking["mongoSynced"] = try_synchronize_mongo(schema)
+        return booking
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except IntegrityError:
+        logger.exception("PostgreSQL constraint rejected a public room booking")
+        raise HTTPException(status_code=409, detail="Unable to reserve the selected room. Please try another room.") from None
+    except (SQLAlchemyError, RuntimeError):
+        logger.exception("Unable to save a public room booking")
+        raise HTTPException(status_code=503, detail="Unable to save your reservation right now.") from None
 
 
 @app.get("/api/auth/me")

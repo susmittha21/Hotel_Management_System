@@ -52,14 +52,12 @@ const DEFAULT_REVIEWS = [];
 const ROLE_MODULES = {
   'Hotel Manager': ['dashboard', 'rooms', 'bookings', 'guests', 'staff', 'housekeeping', 'maintenance', 'invoices', 'food', 'services', 'reviews'],
   'Front Desk': ['dashboard', 'rooms', 'bookings', 'guests'],
-  'Operations Staff': ['housekeeping', 'maintenance', 'food', 'services', 'reviews'],
   'Accounts Cashier': ['invoices']
 };
 
 const ROLE_HOME_MODULE = {
   'Hotel Manager': 'dashboard',
   'Front Desk': 'dashboard',
-  'Operations Staff': 'housekeeping',
   'Accounts Cashier': 'invoices'
 };
 
@@ -461,6 +459,35 @@ function openModal(modalId) {
 function closeModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) modal.classList.remove('show');
+}
+
+function renderActionMenu(recordId, actions) {
+  const options = actions.map(({ action, label, disabled = false }) => `
+    <option value="${action}"${disabled ? ' disabled' : ''}>${label}</option>
+  `).join('');
+  return `<select class="action-menu-select" aria-label="Record actions" data-record-id="${encodeURIComponent(recordId)}"><option value="">Actions</option>${options}</select>`;
+}
+
+function escapeHtml(value) {
+  const entities = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  };
+  return String(value ?? '').replace(/[&<>"']/g, character => entities[character]);
+}
+
+function bindActionMenu(tableBody, handler) {
+  tableBody.addEventListener('change', event => {
+    const select = event.target.closest('select[data-record-id]');
+    if (!select || !select.value) return;
+    const action = select.value;
+    const recordId = decodeURIComponent(select.dataset.recordId);
+    select.selectedIndex = 0;
+    handler(action, recordId);
+  });
 }
 
 // Global initialization for live clock and common triggers

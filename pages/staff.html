@@ -54,7 +54,7 @@
           </div>
         </div>
         <div class="topbar-right">
-          <button class="btn-quick-action" onclick="openModal('newStaffModal')">+ Add Staff</button>
+          <button class="btn-quick-action" onclick="startNewStaff()">+ Add Staff</button>
         </div>
       </header>
 
@@ -81,7 +81,7 @@
                     <th>Role</th>
                     <th>Phone</th>
                     <th>Salary</th>
-                    <th>Action</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="staffTableBody"></tbody>
@@ -96,7 +96,7 @@
   <div class="modal-backdrop" id="newStaffModal">
     <div class="modal-dialog" style="max-width: 640px;">
       <div class="modal-header">
-        <h3 class="modal-title">Add Staff Member</h3>
+        <h3 class="modal-title" id="staffModalTitle">Add Staff Member</h3>
         <button class="modal-close" onclick="closeModal('newStaffModal')">&times;</button>
       </div>
       <form id="newStaffForm">
@@ -134,7 +134,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeModal('newStaffModal')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Staff</button>
+          <button type="submit" class="btn btn-primary" id="staffSubmitButton">Save Staff</button>
         </div>
       </form>
     </div>

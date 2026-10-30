@@ -60,13 +60,13 @@ function renderArrivalsTable() {
 
   tableBody.innerHTML = arrivals.map(b => `
     <tr>
-      <td><strong>${b.bookingId}</strong></td>
-      <td>${b.guestName}</td>
-      <td><span class="badge" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd;">Room ${b.roomNo}</span></td>
-      <td>${b.checkIn}</td>
+      <td><strong>${escapeHtml(b.bookingId)}</strong></td>
+      <td>${escapeHtml(b.guestName)}</td>
+      <td><span class="badge" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd;">Room ${escapeHtml(b.roomNo)}</span></td>
+      <td>${escapeHtml(b.checkIn)}</td>
       <td>
         <span class="badge ${b.status === 'Checked-In' ? 'badge-occupied' : 'badge-reserved'}">
-          ${b.status}
+          ${escapeHtml(b.status)}
         </span>
       </td>
       <td>
@@ -93,10 +93,10 @@ function renderDeparturesTable() {
 
   tableBody.innerHTML = bookings.map(b => `
     <tr>
-      <td><strong>${b.bookingId}</strong></td>
-      <td>${b.guestName}</td>
-      <td>Room ${b.roomNo}</td>
-      <td>${b.checkOut}</td>
+      <td><strong>${escapeHtml(b.bookingId)}</strong></td>
+      <td>${escapeHtml(b.guestName)}</td>
+      <td>Room ${escapeHtml(b.roomNo)}</td>
+      <td>${escapeHtml(b.checkOut)}</td>
       <td>
         <button class="btn btn-sm btn-secondary" onclick="quickCheckOut('${b.bookingId}', '${b.roomNo}')">Process Folio</button>
       </td>

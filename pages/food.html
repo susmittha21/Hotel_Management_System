@@ -30,7 +30,7 @@
     <main class="pms-main">
       <header class="pms-topbar">
         <div class="topbar-left"><button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button><div class="page-headline"><h1>Food &amp; Room Service</h1><p>Menu items and guest orders</p></div></div>
-        <div class="topbar-right"><button class="btn-quick-action" onclick="openModal('newOrderModal')">+ New Order</button></div>
+        <div class="topbar-right"><button class="btn-quick-action" onclick="startNewFoodOrder()">+ New Order</button></div>
       </header>
 
       <div class="page-content">
@@ -38,7 +38,7 @@
           <div class="card-panel-body" style="padding: 0;">
             <div class="table-responsive">
               <table class="pms-table">
-                <thead><tr><th>Order ID</th><th>Guest</th><th>Item</th><th>Qty</th><th>Total</th><th>Status</th></tr></thead>
+                <thead><tr><th>Order ID</th><th>Guest</th><th>Item</th><th>Qty</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody id="foodOrdersTableBody"></tbody>
               </table>
             </div>
@@ -50,7 +50,7 @@
 
   <div class="modal-backdrop" id="newOrderModal">
     <div class="modal-dialog">
-      <div class="modal-header"><h3 class="modal-title">Place Food Order</h3><button class="modal-close" onclick="closeModal('newOrderModal')">&times;</button></div>
+      <div class="modal-header"><h3 class="modal-title" id="foodOrderModalTitle">Place Food Order</h3><button class="modal-close" onclick="closeModal('newOrderModal')">&times;</button></div>
       <form id="newFoodOrderForm">
         <div class="modal-body">
           <div class="form-grid">
@@ -62,7 +62,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeModal('newOrderModal')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Order</button>
+          <button type="submit" class="btn btn-primary" id="foodOrderSubmitButton">Save Order</button>
         </div>
       </form>
     </div>

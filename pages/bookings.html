@@ -64,7 +64,7 @@
         </div>
 
         <div class="topbar-right">
-          <button class="btn-quick-action" onclick="openModal('newBookingModal')">
+          <button class="btn-quick-action" onclick="startNewBooking()">
             + Create Reservation
           </button>
         </div>
@@ -80,6 +80,13 @@
             </div>
 
             <div style="display: flex; gap: 10px; align-items: center;">
+              <select id="bookingStatusFilter" class="form-control" style="width: 170px;">
+                <option value="">All statuses</option>
+                <option>Confirmed</option>
+                <option>Checked-In</option>
+                <option>Checked-Out</option>
+                <option>Cancelled</option>
+              </select>
               <span class="badge badge-secondary" id="bookingCountBadge">0 Bookings</span>
             </div>
           </div>
@@ -99,7 +106,7 @@
                     <th>Occupancy</th>
                     <th>Total Tariff</th>
                     <th>Reservation Status</th>
-                    <th>Front Desk Action</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="bookingsTableBody">
@@ -117,7 +124,7 @@
   <div class="modal-backdrop" id="newBookingModal">
     <div class="modal-dialog" style="max-width: 640px;">
       <div class="modal-header">
-        <h3 class="modal-title">New Guest Reservation / Walk-In Check-In</h3>
+        <h3 class="modal-title" id="newBookingTitle">New Guest Reservation / Walk-In Check-In</h3>
         <button class="modal-close" onclick="closeModal('newBookingModal')">&times;</button>
       </div>
       <form id="newBookingForm">
@@ -185,7 +192,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeModal('newBookingModal')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Confirm Reservation</button>
+          <button type="submit" class="btn btn-primary" id="bookingSubmitButton">Confirm Reservation</button>
         </div>
       </form>
     </div>

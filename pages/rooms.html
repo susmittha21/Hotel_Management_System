@@ -214,7 +214,17 @@
 
           <div class="form-group">
             <label class="form-label">Floor</label>
-            <input type="text" id="actionRoomFloor" class="form-control" readonly>
+            <select id="actionRoomFloor" class="form-control">
+              <option value="1">Floor 1</option>
+              <option value="2">Floor 2</option>
+              <option value="3">Floor 3</option>
+              <option value="4">Floor 4</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="actionRoomCapacity">Capacity (Guests)</label>
+            <input type="number" id="actionRoomCapacity" class="form-control" min="1" max="8">
           </div>
 
           <div class="form-group">
@@ -232,10 +242,34 @@
               <option value="Maintenance">Out of Order / Maintenance</option>
             </select>
           </div>
+
+          <div class="form-group">
+            <label class="form-label" for="actionRoomView">View Type</label>
+            <select id="actionRoomView" class="form-control">
+              <option value="City View">City View</option>
+              <option value="Garden View">Garden View</option>
+              <option value="Sea View">Sea View</option>
+              <option value="Courtyard View">Courtyard View</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="actionRoomSmoking">Smoking Policy</label>
+            <select id="actionRoomSmoking" class="form-control">
+              <option value="No">Non-Smoking</option>
+              <option value="Yes">Smoking Permitted</option>
+            </select>
+          </div>
+
+          <div class="form-group full-width">
+            <label class="form-label" for="actionRoomAmenities">Amenities / Description</label>
+            <input type="text" id="actionRoomAmenities" class="form-control">
+          </div>
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="closeModal('roomActionModal')">Cancel</button>
+        <button type="button" class="btn btn-danger" id="deleteRoomButton" onclick="deleteRoomFromModal()">Delete Room</button>
         <button type="button" class="btn btn-primary" onclick="updateRoomDetailsFromModal()">Update Room Status</button>
       </div>
     </div>

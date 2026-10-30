@@ -38,7 +38,7 @@
           <div class="card-panel-body" style="padding: 0;">
             <div class="table-responsive">
               <table class="pms-table">
-                <thead><tr><th>Invoice ID</th><th>Guest</th><th>Booking</th><th>Room</th><th>Subtotal</th><th>CGST</th><th>SGST</th><th>Total</th><th>Status</th><th>Action</th></tr></thead>
+                <thead><tr><th>Invoice ID</th><th>Guest</th><th>Booking</th><th>Room</th><th>Subtotal</th><th>CGST</th><th>SGST</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody id="invoicesTableBody"></tbody>
               </table>
             </div>
@@ -63,6 +63,28 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeModal('newInvoiceModal')">Cancel</button>
           <button type="submit" class="btn btn-primary">Generate Invoice</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="paymentModal">
+    <div class="modal-dialog" style="max-width: 420px;">
+      <div class="modal-header"><h3 class="modal-title">Record Invoice Payment</h3><button class="modal-close" onclick="closeModal('paymentModal')">&times;</button></div>
+      <form id="paymentForm">
+        <div class="modal-body">
+          <input type="hidden" id="paymentInvoiceId">
+          <div class="form-group">
+            <label class="form-label" for="paymentMethod">Payment Method</label>
+            <select id="paymentMethod" class="form-control" required>
+              <option value="">Select a method</option>
+              <option>Cash</option><option>Credit Card</option><option>Debit Card</option><option>UPI</option><option>Net Banking</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('paymentModal')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Record Payment</button>
         </div>
       </form>
     </div>

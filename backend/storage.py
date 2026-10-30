@@ -900,6 +900,168 @@ def replace_collection(
     return len(records)
 
 
+def public_available_rooms(
+    connection: Connection,
+    schema: str,
+    check_in: date,
+    check_out: date,
+    guests_count: int,
+    room_type: str | None = None,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        text(
+            f"""
+            SELECT r.room_number, rt.type_name, r.floor_number, r.capacity, r.price,
+                   r.view_type, r.amenities
+            FROM "{schema}".room r
+            LEFT JOIN "{schema}".room_type rt ON rt.room_type_id=r.room_type_id
+            WHERE r.room_status IN ('Available', 'Reserved')
+              AND r.capacity >= :guests_count
+              AND (:room_type IS NULL OR rt.type_name=:room_type)
+              AND NOT EXISTS (
+                  SELECT 1 FROM "{schema}".booking b
+                  WHERE b.room_id=r.room_id
+                    AND b.booking_status <> 'Cancelled'
+                    AND b.check_in_date < :check_out
+                    AND b.check_out_date > :check_in
+              )
+            ORDER BY r.price, r.room_number
+            """
+        ),
+        {
+            "check_in": check_in,
+            "check_out": check_out,
+            "guests_count": guests_count,
+            "room_type": room_type,
+        },
+    ).mappings()
+    return [
+        {
+            "roomNo": row["room_number"],
+            "type": row["type_name"] or "Standard",
+            "floor": row["floor_number"],
+            "capacity": row["capacity"],
+            "price": float(row["price"]),
+            "viewType": row["view_type"],
+            "amenities": row["amenities"],
+        }
+        for row in rows
+    ]
+
+
+def create_public_booking(
+    connection: Connection,
+    schema: str,
+    *,
+    room_number: str,
+    guest_name: str,
+    phone: str,
+    email: str | None,
+    check_in: date,
+    check_out: date,
+    guests_count: int,
+    special_requests: str | None,
+) -> dict[str, Any]:
+    room = connection.execute(
+        text(
+            f"""
+            SELECT r.room_id, r.room_number, r.capacity, r.price, rt.type_name, r.room_status
+            FROM "{schema}".room r
+            LEFT JOIN "{schema}".room_type rt ON rt.room_type_id=r.room_type_id
+            WHERE r.room_number=:room_number
+            FOR UPDATE OF r
+            """
+        ),
+        {"room_number": room_number},
+    ).mappings().one_or_none()
+    if room is None:
+        raise ValueError("The selected room is no longer available.")
+    if room["room_status"] not in {"Available", "Reserved"} or room["capacity"] < guests_count:
+        raise ValueError("The selected room is no longer available for this party size.")
+    overlap = connection.execute(
+        text(
+            f"""
+            SELECT 1 FROM "{schema}".booking
+            WHERE room_id=:room_id
+              AND booking_status <> 'Cancelled'
+              AND check_in_date < :check_out
+              AND check_out_date > :check_in
+            LIMIT 1
+            """
+        ),
+        {"room_id": room["room_id"], "check_in": check_in, "check_out": check_out},
+    ).first()
+    if overlap:
+        raise ValueError("The selected room has just been booked for those dates. Please choose another room.")
+
+    guest_id = f"G-{uuid4().hex[:16].upper()}"
+    booking_id = f"B-{uuid4().hex[:16].upper()}"
+    first_name, _, last_name = guest_name.strip().partition(" ")
+    last_name = last_name.strip() or "Guest"
+    nights = (check_out - check_in).days
+    total_amount = Decimal(str(room["price"])) * nights
+    connection.execute(
+        text(
+            f"""
+            INSERT INTO "{schema}".guest
+                (guest_id, first_name, last_name, phone_number, email, country, id_type, id_number)
+            VALUES
+                (:guest_id, :first_name, :last_name, :phone, :email, 'India', 'Not Provided', :id_number)
+            """
+        ),
+        {
+            "guest_id": guest_id,
+            "first_name": first_name[:50],
+            "last_name": last_name[:50],
+            "phone": phone,
+            "email": email,
+            "id_number": f"ONLINE-{guest_id}",
+        },
+    )
+    connection.execute(
+        text(
+            f"""
+            INSERT INTO "{schema}".booking
+                (booking_id, guest_id, room_id, booking_date, check_in_date, check_out_date,
+                 number_of_guests, booking_status, booking_source, special_requests, total_tariff)
+            VALUES
+                (:booking_id, :guest_id, :room_id, CURRENT_TIMESTAMP, :check_in, :check_out,
+                 :guests_count, 'Confirmed', 'Website', :special_requests, :total_amount)
+            """
+        ),
+        {
+            "booking_id": booking_id,
+            "guest_id": guest_id,
+            "room_id": room["room_id"],
+            "check_in": check_in,
+            "check_out": check_out,
+            "guests_count": guests_count,
+            "special_requests": special_requests,
+            "total_amount": total_amount,
+        },
+    )
+    if room["room_status"] == "Available":
+        connection.execute(
+            text(f'UPDATE "{schema}".room SET room_status=\'Reserved\' WHERE room_id=:room_id'),
+            {"room_id": room["room_id"]},
+        )
+    return {
+        "bookingId": booking_id,
+        "guestId": guest_id,
+        "guestName": f"{first_name} {last_name}",
+        "roomNo": room["room_number"],
+        "roomType": room["type_name"] or "Standard",
+        "checkIn": check_in.isoformat(),
+        "checkOut": check_out.isoformat(),
+        "guestsCount": guests_count,
+        "totalAmount": float(total_amount),
+        "status": "Confirmed",
+        "paymentStatus": "Pending",
+        "bookingSource": "Website",
+        "specialRequests": special_requests or "",
+    }
+
+
 def _save_rooms(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
     existing = _existing_ids(connection, schema, "room", "room_number")
     retained = set()

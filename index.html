@@ -34,40 +34,68 @@
     </div>
   </header>
 
-  <div class="quick-booking-bar">
-    <form class="quick-bar-grid" onsubmit="event.preventDefault(); window.location.href='pages/login.html';">
+  <section class="quick-booking-bar" id="booking">
+    <div class="booking-heading">
+      <h3>Book a Room</h3>
+      <p>Check live availability and send a reservation request directly to our front desk.</p>
+    </div>
+    <form id="publicBookingForm" class="quick-bar-grid">
       <div class="quick-field">
-        <label>Check-In</label>
-        <input type="date" value="2026-09-26">
+        <label for="publicCheckIn">Check-In</label>
+        <input id="publicCheckIn" name="checkIn" type="date" required>
       </div>
       <div class="quick-field">
-        <label>Check-Out</label>
-        <input type="date" value="2026-09-29">
+        <label for="publicCheckOut">Check-Out</label>
+        <input id="publicCheckOut" name="checkOut" type="date" required>
       </div>
       <div class="quick-field">
-        <label>Room Type</label>
-        <select>
-          <option value="all">All Types</option>
-          <option value="deluxe">Deluxe — ₹4,500/night</option>
-          <option value="suite">Suite — ₹8,500/night</option>
-          <option value="standard">Standard — ₹2,500/night</option>
+        <label for="publicRoomType">Room Type</label>
+        <select id="publicRoomType" name="roomType">
+          <option value="">All available types</option>
         </select>
       </div>
       <div class="quick-field">
-        <label>Guests</label>
-        <select>
-          <option value="1">1 Adult</option>
-          <option value="2" selected>2 Adults</option>
-          <option value="3">3 Adults</option>
+        <label for="publicGuests">Guests</label>
+        <select id="publicGuests" name="guestsCount" required>
+          <option value="1">1 Guest</option>
+          <option value="2" selected>2 Guests</option>
+          <option value="3">3 Guests</option>
+          <option value="4">4 Guests</option>
+          <option value="5">5 Guests</option>
+          <option value="6">6 Guests</option>
+          <option value="7">7 Guests</option>
+          <option value="8">8 Guests</option>
         </select>
       </div>
-      <div>
-        <button type="submit" class="btn btn-primary" style="height: 34px; padding: 0 18px; width: 100%;">
-          Check Availability
-        </button>
+      <div class="quick-field">
+        <label for="publicGuestName">Full Name</label>
+        <input id="publicGuestName" name="guestName" type="text" autocomplete="name" maxlength="100" required placeholder="First and last name">
       </div>
+      <div class="quick-field">
+        <label for="publicGuestPhone">Phone</label>
+        <input id="publicGuestPhone" name="phone" type="tel" autocomplete="tel" maxlength="20" required placeholder="+91 98765 43210">
+      </div>
+      <div class="quick-field">
+        <label for="publicGuestEmail">Email (optional)</label>
+        <input id="publicGuestEmail" name="email" type="email" autocomplete="email" maxlength="100" placeholder="you@example.com">
+      </div>
+      <div class="quick-field quick-room-select">
+        <label for="publicRoomNo">Available Room</label>
+        <select id="publicRoomNo" name="roomNo" required disabled>
+          <option value="">Check availability to choose a room</option>
+        </select>
+      </div>
+      <div class="quick-field quick-requests">
+        <label for="publicSpecialRequests">Special Requests (optional)</label>
+        <input id="publicSpecialRequests" name="specialRequests" type="text" maxlength="1000" placeholder="Any requests for your stay?">
+      </div>
+      <div class="quick-booking-actions">
+        <button id="checkAvailabilityButton" type="button" class="btn btn-secondary">Check Availability</button>
+        <button id="submitPublicBooking" type="submit" class="btn btn-primary" disabled>Request Reservation</button>
+      </div>
+      <p id="publicBookingMessage" class="booking-message" role="status" aria-live="polite"></p>
     </form>
-  </div>
+  </section>
 
   <section class="landing-section" id="rooms">
     <div class="section-head">
@@ -91,7 +119,7 @@
           </div>
           <div class="room-footer-row">
             <div class="room-tariff">₹4,500 <span>/ night</span></div>
-            <a href="pages/login.html" class="btn btn-sm btn-primary">Reserve</a>
+            <a href="#booking" class="btn btn-sm btn-primary room-book-link" data-room-type="Deluxe">Reserve</a>
           </div>
         </div>
       </div>
@@ -111,7 +139,7 @@
           </div>
           <div class="room-footer-row">
             <div class="room-tariff">₹8,500 <span>/ night</span></div>
-            <a href="pages/login.html" class="btn btn-sm btn-primary">Reserve</a>
+            <a href="#booking" class="btn btn-sm btn-primary room-book-link" data-room-type="Suite">Reserve</a>
           </div>
         </div>
       </div>
@@ -130,7 +158,7 @@
           </div>
           <div class="room-footer-row">
             <div class="room-tariff">₹2,500 <span>/ night</span></div>
-            <a href="pages/login.html" class="btn btn-sm btn-primary">Reserve</a>
+            <a href="#booking" class="btn btn-sm btn-primary room-book-link" data-room-type="Standard">Reserve</a>
           </div>
         </div>
       </div>
@@ -148,5 +176,7 @@
     </div>
   </footer>
 
+  <script src="js/app.js"></script>
+  <script src="js/public-booking.js"></script>
 </body>
 </html>

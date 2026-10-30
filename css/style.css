@@ -460,6 +460,17 @@ a:hover { text-decoration: underline; }
   background: #f7fafc;
 }
 
+.action-menu-select {
+  min-width: 125px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-dark);
+  border-radius: var(--radius);
+  background: #ffffff;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+}
+
 /* Status Badges */
 .badge {
   display: inline-block;

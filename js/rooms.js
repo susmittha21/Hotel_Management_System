@@ -91,18 +91,18 @@ function renderRoomGrid() {
     return `
       <div class="room-card ${statusClass}" onclick="openRoomActionModal('${room.roomNo}')">
         <div class="room-card-head">
-          <span class="room-num">Room ${room.roomNo}</span>
-          <span class="badge badge-${room.status.toLowerCase()}">${room.status}</span>
+          <span class="room-num">Room ${escapeHtml(room.roomNo)}</span>
+          <span class="badge badge-${room.status.toLowerCase()}">${escapeHtml(room.status)}</span>
         </div>
-        <div class="room-type">${room.type} • Floor ${room.floor}${room.viewType ? ` • ${room.viewType}` : ''}</div>
+        <div class="room-type">${escapeHtml(room.type)} • Floor ${escapeHtml(room.floor)}${room.viewType ? ` • ${escapeHtml(room.viewType)}` : ''}</div>
         <div class="room-card-body">
           <div style="display:flex; justify-content:space-between; margin-top:8px;">
             <span>Capacity: ${room.capacity} Guests</span>
             <span class="room-price">₹${Number(room.price).toLocaleString('en-IN')}/night</span>
           </div>
-          ${room.currentGuest ? `<div class="room-guest">Guest: ${room.currentGuest}</div>` : ''}
+          ${room.currentGuest ? `<div class="room-guest">Guest: ${escapeHtml(room.currentGuest)}</div>` : ''}
           <div style="font-size:0.75rem; color:#94a3b8; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-            ${room.amenities || 'Standard Amenities'}${room.smokingAllowed ? ' • Smoking' : ' • Non-Smoking'}
+            ${escapeHtml(room.amenities || 'Standard Amenities')}${room.smokingAllowed ? ' • Smoking' : ' • Non-Smoking'}
           </div>
         </div>
       </div>
@@ -117,10 +117,17 @@ function openRoomActionModal(roomNo) {
 
   document.getElementById('actionModalRoomNo').textContent = `Room ${room.roomNo} (${room.type})`;
   document.getElementById('actionRoomType').value = room.type;
-  document.getElementById('actionRoomFloor').value = room.floor;
+  document.getElementById('actionRoomFloor').value = String(room.floor);
+  document.getElementById('actionRoomCapacity').value = room.capacity || 1;
   document.getElementById('actionRoomPrice').value = room.price;
   document.getElementById('actionRoomStatus').value = room.status;
+  document.getElementById('actionRoomView').value = room.viewType || 'City View';
+  document.getElementById('actionRoomSmoking').value = room.smokingAllowed ? 'Yes' : 'No';
+  document.getElementById('actionRoomAmenities').value = room.amenities || '';
   document.getElementById('hiddenTargetRoomNo').value = room.roomNo;
+  const hasBookings = HotelStore.getBookings().some(booking => booking.roomNo === room.roomNo);
+  document.getElementById('deleteRoomButton').disabled = hasBookings;
+  document.getElementById('deleteRoomButton').title = hasBookings ? 'Rooms with reservation history cannot be deleted.' : '';
 
   openModal('roomActionModal');
 }
@@ -130,13 +137,24 @@ async function updateRoomDetailsFromModal() {
   const newStatus = document.getElementById('actionRoomStatus').value;
   const newPrice = Number(document.getElementById('actionRoomPrice').value);
   const newType = document.getElementById('actionRoomType').value;
+  const newFloor = document.getElementById('actionRoomFloor').value;
+  const capacity = Number(document.getElementById('actionRoomCapacity').value);
 
   const rooms = HotelStore.getRooms();
   const room = rooms.find(r => r.roomNo === roomNo);
   if (room) {
+    if (!Number.isFinite(newPrice) || newPrice < 0 || !Number.isInteger(capacity) || capacity < 1) {
+      showToast('Enter a valid room rate and guest capacity.', 'error');
+      return;
+    }
     room.status = newStatus;
     room.price = newPrice;
     room.type = newType;
+    room.floor = newFloor;
+    room.capacity = capacity;
+    room.viewType = document.getElementById('actionRoomView').value;
+    room.smokingAllowed = document.getElementById('actionRoomSmoking').value === 'Yes';
+    room.amenities = document.getElementById('actionRoomAmenities').value.trim();
     if (newStatus !== 'Occupied') {
       delete room.currentGuest;
     }
@@ -145,6 +163,20 @@ async function updateRoomDetailsFromModal() {
     closeModal('roomActionModal');
     renderRoomGrid();
   }
+}
+
+async function deleteRoomFromModal() {
+  const roomNo = document.getElementById('hiddenTargetRoomNo').value;
+  if (HotelStore.getBookings().some(booking => booking.roomNo === roomNo)) {
+    showToast('Rooms with reservation history cannot be deleted.', 'error');
+    return;
+  }
+  if (!confirm(`Delete Room ${roomNo} from the inventory?`)) return;
+  const rooms = HotelStore.getRooms().filter(room => room.roomNo !== roomNo);
+  if (await HotelStore.saveRooms(rooms) === false) return;
+  closeModal('roomActionModal');
+  renderRoomGrid();
+  showToast(`Room ${roomNo} deleted.`, 'info');
 }
 
 function setupAddRoomForm() {

@@ -30,7 +30,7 @@
     <main class="pms-main">
       <header class="pms-topbar">
         <div class="topbar-left"><button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button><div class="page-headline"><h1>Maintenance Desk</h1><p>Issue tracking and room repair management</p></div></div>
-        <div class="topbar-right"><button class="btn-quick-action" onclick="openModal('newIssueModal')">+ Report Issue</button></div>
+        <div class="topbar-right"><button class="btn-quick-action" onclick="startNewMaintenanceIssue()">+ Report Issue</button></div>
       </header>
 
       <div class="page-content">
@@ -38,7 +38,7 @@
           <div class="card-panel-body" style="padding: 0;">
             <div class="table-responsive">
               <table class="pms-table">
-                <thead><tr><th>Issue ID</th><th>Room</th><th>Issue Type</th><th>Priority</th><th>Assigned To</th><th>Status</th><th>Action</th></tr></thead>
+                <thead><tr><th>Issue ID</th><th>Room</th><th>Issue Type</th><th>Priority</th><th>Assigned To</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody id="maintenanceTableBody"></tbody>
               </table>
             </div>
@@ -50,7 +50,7 @@
 
   <div class="modal-backdrop" id="newIssueModal">
     <div class="modal-dialog">
-      <div class="modal-header"><h3 class="modal-title">Report Room Issue</h3><button class="modal-close" onclick="closeModal('newIssueModal')">&times;</button></div>
+      <div class="modal-header"><h3 class="modal-title" id="issueModalTitle">Report Room Issue</h3><button class="modal-close" onclick="closeModal('newIssueModal')">&times;</button></div>
       <form id="newIssueForm">
         <div class="modal-body">
           <div class="form-grid">
@@ -58,11 +58,12 @@
             <div class="form-group"><label class="form-label" for="issueType">Issue Type</label><input type="text" id="issueType" class="form-control" required></div>
             <div class="form-group"><label class="form-label" for="issuePriority">Priority</label><select id="issuePriority" class="form-control"><option>Low</option><option selected>Medium</option><option>High</option><option>Critical</option></select></div>
             <div class="form-group"><label class="form-label" for="issueStaff">Assigned Technician</label><input type="text" id="issueStaff" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="issueStatus">Status</label><select id="issueStatus" class="form-control"><option>Open</option><option>In Progress</option><option>Resolved</option></select></div>
           </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeModal('newIssueModal')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Issue</button>
+          <button type="submit" class="btn btn-primary" id="issueSubmitButton">Save Issue</button>
         </div>
       </form>
     </div>

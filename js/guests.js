@@ -2,6 +2,8 @@
  * VS PLAZA PMS - GUEST DIRECTORY CONTROLLER
  */
 
+let editingGuestId = null;
+
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     await HotelStore.initialize();
@@ -12,6 +14,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   renderGuestDirectory();
   setupNewGuestForm();
+  bindActionMenu(document.getElementById('guestTableBody'), (action, guestId) => {
+    if (action === 'view') viewGuestProfile(guestId);
+    if (action === 'edit') editGuest(guestId);
+    if (action === 'delete') deleteGuest(guestId);
+  });
 
   const searchInput = document.getElementById('guestSearchInput');
   if (searchInput) {
@@ -49,28 +56,35 @@ function renderGuestDirectory(query = '') {
     return;
   }
 
+  const bookings = HotelStore.getBookings();
   tableBody.innerHTML = filtered.map(g => {
     let statusBadge = 'badge-available';
     if (g.status === 'In-House') statusBadge = 'badge-occupied';
     else if (g.status === 'Reserved') statusBadge = 'badge-reserved';
+    const hasBookings = bookings.some(booking =>
+      booking.guestId === g.guestId ||
+      booking.guestName.toLowerCase() === `${g.firstName} ${g.lastName}`.toLowerCase()
+    );
 
     return `
       <tr>
-        <td><strong>${g.guestId}</strong></td>
+        <td><strong>${escapeHtml(g.guestId)}</strong></td>
         <td>
-          <div style="font-weight:600; color:var(--text-main);">${g.firstName} ${g.lastName}</div>
-          <div style="font-size:0.75rem; color:var(--text-muted);">${g.email || 'No email provided'}</div>
+          <div style="font-weight:600; color:var(--text-main);">${escapeHtml(g.firstName)} ${escapeHtml(g.lastName)}</div>
+          <div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(g.email || 'No email provided')}</div>
         </td>
-        <td>${g.phone || 'N/A'}</td>
-        <td>${g.city || 'N/A'}, ${g.country || 'India'}</td>
+        <td>${escapeHtml(g.phone || 'N/A')}</td>
+        <td>${escapeHtml(g.city || 'N/A')}, ${escapeHtml(g.country || 'India')}</td>
         <td>
-          <div style="font-size:0.82rem; font-weight:600;">${g.idType || 'ID Proof'}</div>
-          <div style="font-size:0.75rem; color:var(--text-muted);">${g.idNumber || 'Verified on file'}</div>
+          <div style="font-size:0.82rem; font-weight:600;">${escapeHtml(g.idType || 'ID Proof')}</div>
+          <div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(g.idNumber || 'Verified on file')}</div>
         </td>
-        <td><span class="badge ${statusBadge}">${g.status || 'Past Guest'}</span></td>
-        <td>
-          <button class="btn btn-sm btn-secondary" onclick="viewGuestProfile('${g.guestId}')">View Profile</button>
-        </td>
+        <td><span class="badge ${statusBadge}">${escapeHtml(g.status || 'Past Guest')}</span></td>
+        <td>${renderActionMenu(g.guestId, [
+          { action: 'view', label: 'View profile' },
+          { action: 'edit', label: 'Edit guest' },
+          { action: 'delete', label: 'Delete guest', disabled: hasBookings }
+        ])}</td>
       </tr>
     `;
   }).join('');
@@ -141,9 +155,8 @@ function setupNewGuestForm() {
     const idNumber = document.getElementById('guestIdNumber').value.trim();
 
     const guests = HotelStore.getGuests();
-    const guestId = `G00${guests.length + 1}`;
-
-    guests.push({
+    const guestId = editingGuestId || `G-${crypto.randomUUID().slice(0, 16).toUpperCase()}`;
+    const guestRecord = {
       guestId,
       firstName,
       lastName,
@@ -157,13 +170,68 @@ function setupNewGuestForm() {
       country: country || 'India',
       idType,
       idNumber,
-      status: 'Registered'
-    });
+      status: editingGuestId
+        ? guests.find(guest => guest.guestId === editingGuestId)?.status || 'Registered'
+        : 'Registered'
+    };
+    const existingIndex = guests.findIndex(guest => guest.guestId === editingGuestId);
+    if (existingIndex >= 0) guests[existingIndex] = guestRecord;
+    else guests.push(guestRecord);
 
     if (await HotelStore.saveGuests(guests) === false) return;
-    showToast(`Guest profile created for ${firstName} ${lastName}!`, 'success');
+    showToast(`Guest profile ${editingGuestId ? 'updated' : 'created'} for ${firstName} ${lastName}.`, 'success');
+    editingGuestId = null;
     form.reset();
     closeModal('newGuestModal');
+    document.getElementById('guestModalTitle').textContent = 'Register Guest Profile';
+    document.getElementById('guestSubmitButton').textContent = 'Save Guest Record';
     renderGuestDirectory();
   });
+}
+
+function editGuest(guestId) {
+  const guest = HotelStore.getGuests().find(item => item.guestId === guestId);
+  if (!guest) return;
+  editingGuestId = guestId;
+  document.getElementById('guestFirstName').value = guest.firstName || '';
+  document.getElementById('guestLastName').value = guest.lastName || '';
+  document.getElementById('guestGender').value = guest.gender || 'Other';
+  document.getElementById('guestDob').value = guest.dob || '';
+  document.getElementById('guestPhone').value = guest.phone || '';
+  document.getElementById('guestEmail').value = guest.email || '';
+  document.getElementById('guestAddress').value = guest.address || '';
+  document.getElementById('guestCity').value = guest.city || '';
+  document.getElementById('guestState').value = guest.state || '';
+  document.getElementById('guestCountry').value = guest.country || 'India';
+  document.getElementById('guestIdType').value = guest.idType || 'National ID';
+  document.getElementById('guestIdNumber').value = guest.idNumber || '';
+  document.getElementById('guestModalTitle').textContent = `Edit Guest ${guestId}`;
+  document.getElementById('guestSubmitButton').textContent = 'Save Changes';
+  openModal('newGuestModal');
+}
+
+function startNewGuest() {
+  editingGuestId = null;
+  document.getElementById('newGuestForm').reset();
+  document.getElementById('guestModalTitle').textContent = 'Register Guest Profile';
+  document.getElementById('guestSubmitButton').textContent = 'Save Guest Record';
+  openModal('newGuestModal');
+}
+
+async function deleteGuest(guestId) {
+  const guest = HotelStore.getGuests().find(item => item.guestId === guestId);
+  if (!guest) return;
+  const hasBookings = HotelStore.getBookings().some(booking =>
+    booking.guestId === guestId ||
+    booking.guestName.toLowerCase() === `${guest.firstName} ${guest.lastName}`.toLowerCase()
+  );
+  if (hasBookings) {
+    showToast('This guest has reservation history and cannot be deleted.', 'error');
+    return;
+  }
+  if (!confirm(`Delete guest ${guest.firstName} ${guest.lastName}?`)) return;
+  const guests = HotelStore.getGuests().filter(item => item.guestId !== guestId);
+  if (await HotelStore.saveGuests(guests) === false) return;
+  renderGuestDirectory();
+  showToast(`Guest ${guestId} deleted.`, 'info');
 }

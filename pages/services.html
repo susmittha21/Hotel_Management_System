@@ -30,7 +30,7 @@
     <main class="pms-main">
       <header class="pms-topbar">
         <div class="topbar-left"><button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button><div class="page-headline"><h1>Hotel Services</h1><p>Manage services and rates offered to guests</p></div></div>
-        <div class="topbar-right"><button class="btn-quick-action" onclick="openModal('newServiceModal')">+ Add Service</button></div>
+        <div class="topbar-right"><button class="btn-quick-action" onclick="startNewService()">+ Add Service</button></div>
       </header>
 
       <div class="page-content">
@@ -38,7 +38,7 @@
           <div class="card-panel-body" style="padding: 0;">
             <div class="table-responsive">
               <table class="pms-table">
-                <thead><tr><th>Service ID</th><th>Service</th><th>Category</th><th>Price</th><th>Action</th></tr></thead>
+                <thead><tr><th>Service ID</th><th>Service</th><th>Category</th><th>Price</th><th>Actions</th></tr></thead>
                 <tbody id="servicesTableBody"></tbody>
               </table>
             </div>
@@ -50,7 +50,7 @@
 
   <div class="modal-backdrop" id="newServiceModal">
     <div class="modal-dialog">
-      <div class="modal-header"><h3 class="modal-title">Add Hotel Service</h3><button class="modal-close" onclick="closeModal('newServiceModal')">&times;</button></div>
+      <div class="modal-header"><h3 class="modal-title" id="serviceModalTitle">Add Hotel Service</h3><button class="modal-close" onclick="closeModal('newServiceModal')">&times;</button></div>
       <form id="newServiceForm">
         <div class="modal-body">
           <div class="form-grid">
@@ -61,7 +61,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeModal('newServiceModal')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Service</button>
+          <button type="submit" class="btn btn-primary" id="serviceSubmitButton">Save Service</button>
         </div>
       </form>
     </div>

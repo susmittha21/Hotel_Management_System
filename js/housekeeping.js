@@ -1,3 +1,5 @@
+let editingTaskId = null;
+
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     await HotelStore.initialize();
@@ -8,6 +10,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   renderHousekeepingTable();
   setupHousekeepingForm();
+  bindActionMenu(document.getElementById('housekeepingTableBody'), (action, taskId) => {
+    if (action === 'edit') editHousekeepingTask(taskId);
+    if (action === 'delete') deleteHousekeepingTask(taskId);
+  });
 });
 
 function renderHousekeepingTable() {
@@ -28,7 +34,10 @@ function renderHousekeepingTable() {
       <td>${task.taskType}</td>
       <td>${task.scheduledDate}</td>
       <td><span class="status-badge ${task.status.toLowerCase().replace(/\s+/g, '-')}">${task.status}</span></td>
-      <td><button class="btn btn-sm btn-secondary" onclick="updateHousekeepingStatus('${task.taskId}')">Mark Done</button></td>
+      <td>${renderActionMenu(task.taskId, [
+        { action: 'edit', label: 'Edit task' },
+        { action: 'delete', label: 'Delete task' }
+      ])}</td>
     </tr>
   `).join('');
 }
@@ -39,33 +48,60 @@ function setupHousekeepingForm() {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const tasks = HotelStore.getHousekeeping();
+    const taskId = editingTaskId || `HK-${crypto.randomUUID().slice(0, 16).toUpperCase()}`;
     const task = {
-      taskId: `HK-${Date.now().toString().slice(-5)}`,
+      taskId,
       roomNo: document.getElementById('taskRoomNo').value.trim(),
       assignedStaff: document.getElementById('taskStaff').value.trim(),
       taskType: document.getElementById('taskType').value,
       scheduledDate: document.getElementById('taskDate').value,
-      status: 'Pending'
+      status: document.getElementById('taskStatus').value
     };
 
-    const tasks = HotelStore.getHousekeeping();
-    tasks.push(task);
+    const existingIndex = tasks.findIndex(item => item.taskId === editingTaskId);
+    if (existingIndex >= 0) tasks[existingIndex] = task;
+    else tasks.push(task);
     if (await HotelStore.saveHousekeeping(tasks) === false) return;
+    const wasEditing = Boolean(editingTaskId);
+    editingTaskId = null;
     form.reset();
     closeModal('newTaskModal');
+    document.getElementById('taskModalTitle').textContent = 'Create Housekeeping Task';
+    document.getElementById('taskSubmitButton').textContent = 'Add Task';
     renderHousekeepingTable();
-    showToast(`Housekeeping task ${task.taskId} created.`, 'success');
+    showToast(`Housekeeping task ${task.taskId} ${wasEditing ? 'updated' : 'created'}.`, 'success');
   });
 }
 
-async function updateHousekeepingStatus(taskId) {
+function editHousekeepingTask(taskId) {
   const tasks = HotelStore.getHousekeeping();
-  const updated = tasks.map(task => {
-    if (task.taskId === taskId) {
-      return { ...task, status: task.status === 'Completed' ? 'Pending' : 'Completed' };
-    }
-    return task;
-  });
+  const task = tasks.find(item => item.taskId === taskId);
+  if (!task) return;
+  editingTaskId = taskId;
+  document.getElementById('taskRoomNo').value = task.roomNo || '';
+  document.getElementById('taskStaff').value = task.assignedStaff || '';
+  document.getElementById('taskType').value = task.taskType || 'Daily Cleaning';
+  document.getElementById('taskDate').value = task.scheduledDate || '';
+  document.getElementById('taskStatus').value = task.status || 'Pending';
+  document.getElementById('taskModalTitle').textContent = `Edit Task ${taskId}`;
+  document.getElementById('taskSubmitButton').textContent = 'Save Changes';
+  openModal('newTaskModal');
+}
+
+function startNewHousekeepingTask() {
+  editingTaskId = null;
+  document.getElementById('newHousekeepingForm').reset();
+  document.getElementById('taskStatus').value = 'Pending';
+  document.getElementById('taskModalTitle').textContent = 'Create Housekeeping Task';
+  document.getElementById('taskSubmitButton').textContent = 'Add Task';
+  openModal('newTaskModal');
+}
+
+async function deleteHousekeepingTask(taskId) {
+  if (!confirm(`Delete housekeeping task ${taskId}?`)) return;
+  const updated = HotelStore.getHousekeeping().filter(task => task.taskId !== taskId);
   if (await HotelStore.saveHousekeeping(updated) === false) return;
   renderHousekeepingTable();
+  showToast(`Housekeeping task ${taskId} deleted.`, 'info');
 }

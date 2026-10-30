@@ -182,13 +182,28 @@
   border: 1px solid #e2e8f0;
   border-radius: 4px;
   padding: 20px;
-  max-width: 960px;
+  max-width: 1120px;
   margin: 0 auto 40px;
+}
+
+.booking-heading {
+  margin-bottom: 16px;
+}
+
+.booking-heading h3 {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.booking-heading p,
+.booking-message {
+  color: #718096;
+  font-size: 12px;
 }
 
 .quick-bar-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) auto;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
   align-items: flex-end;
 }
@@ -220,6 +235,41 @@
 
 .quick-field input:focus, .quick-field select:focus {
   border-color: #2c5282;
+}
+
+.quick-field input:disabled, .quick-field select:disabled {
+  background: #edf2f7;
+  color: #718096;
+}
+
+.quick-room-select,
+.quick-requests {
+  grid-column: span 2;
+}
+
+.quick-booking-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.quick-booking-actions .btn {
+  min-height: 34px;
+  padding: 0 16px;
+}
+
+.booking-message {
+  grid-column: 1 / -1;
+  min-height: 18px;
+}
+
+.booking-message.success {
+  color: #276749;
+}
+
+.booking-message.error {
+  color: #9b2c2c;
 }
 
 /* Room Cards Section */
@@ -345,4 +395,20 @@
   text-align: center;
   color: #718096;
   font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .quick-booking-bar {
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+
+  .quick-room-select,
+  .quick-requests {
+    grid-column: auto;
+  }
+
+  .quick-booking-actions .btn {
+    flex: 1 1 100%;
+  }
 }

@@ -1,3 +1,5 @@
+let editingStaffId = null;
+
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     await HotelStore.initialize();
@@ -9,6 +11,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   populateDepartmentOptions();
   renderStaffTable();
   setupStaffForm();
+  bindActionMenu(document.getElementById('staffTableBody'), (action, staffId) => {
+    if (action === 'edit') editStaff(staffId);
+    if (action === 'delete') removeStaff(staffId);
+  });
 
   const searchInput = document.getElementById('staffSearchInput');
   if (searchInput) {
@@ -55,7 +61,10 @@ function renderStaffTable(query = '') {
       <td>${s.role}</td>
       <td>${s.phone}</td>
       <td>₹${Number(s.salary || 0).toLocaleString('en-IN')}</td>
-      <td><button class="btn btn-sm btn-secondary" onclick="removeStaff('${s.staffId}')">Remove</button></td>
+      <td>${renderActionMenu(s.staffId, [
+        { action: 'edit', label: 'Edit staff member' },
+        { action: 'delete', label: 'Delete staff member' }
+      ])}</td>
     </tr>
   `).join('');
 }
@@ -75,9 +84,8 @@ function setupStaffForm() {
     const email = document.getElementById('staffEmail').value.trim();
 
     const staff = HotelStore.getStaff();
-    const staffId = `ST-${String(staff.length + 1).padStart(3, '0')}`;
-
-    staff.push({
+    const staffId = editingStaffId || `ST-${crypto.randomUUID().slice(0, 16).toUpperCase()}`;
+    const member = {
       staffId,
       firstName,
       lastName,
@@ -86,17 +94,49 @@ function setupStaffForm() {
       phone,
       email,
       salary
-    });
+    };
+    const existingIndex = staff.findIndex(item => item.staffId === editingStaffId);
+    if (existingIndex >= 0) staff[existingIndex] = member;
+    else staff.push(member);
 
     if (await HotelStore.saveStaff(staff) === false) return;
+    const wasEditing = Boolean(editingStaffId);
+    editingStaffId = null;
     form.reset();
     closeModal('newStaffModal');
+    document.getElementById('staffModalTitle').textContent = 'Add Staff Member';
+    document.getElementById('staffSubmitButton').textContent = 'Save Staff';
     renderStaffTable();
-    showToast(`Staff member ${firstName} ${lastName} added.`, 'success');
+    showToast(`Staff member ${firstName} ${lastName} ${wasEditing ? 'updated' : 'added'}.`, 'success');
   });
 }
 
+function editStaff(staffId) {
+  const member = HotelStore.getStaff().find(item => item.staffId === staffId);
+  if (!member) return;
+  editingStaffId = staffId;
+  document.getElementById('staffFirstName').value = member.firstName || '';
+  document.getElementById('staffLastName').value = member.lastName || '';
+  document.getElementById('staffDepartment').value = member.department || '';
+  document.getElementById('staffRole').value = member.role || '';
+  document.getElementById('staffPhone').value = member.phone || '';
+  document.getElementById('staffSalary').value = member.salary || 0;
+  document.getElementById('staffEmail').value = member.email || '';
+  document.getElementById('staffModalTitle').textContent = `Edit Staff ${staffId}`;
+  document.getElementById('staffSubmitButton').textContent = 'Save Changes';
+  openModal('newStaffModal');
+}
+
+function startNewStaff() {
+  editingStaffId = null;
+  document.getElementById('newStaffForm').reset();
+  document.getElementById('staffModalTitle').textContent = 'Add Staff Member';
+  document.getElementById('staffSubmitButton').textContent = 'Save Staff';
+  openModal('newStaffModal');
+}
+
 async function removeStaff(staffId) {
+  if (!confirm(`Delete staff member ${staffId}?`)) return;
   const staff = HotelStore.getStaff();
   const updated = staff.filter(s => s.staffId !== staffId);
   if (await HotelStore.saveStaff(updated) === false) return;

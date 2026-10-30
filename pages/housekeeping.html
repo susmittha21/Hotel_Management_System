@@ -42,7 +42,7 @@
           <button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button>
           <div class="page-headline"><h1>Housekeeping</h1><p>Cleaning, inspections and room readiness</p></div>
         </div>
-        <div class="topbar-right"><button class="btn-quick-action" onclick="openModal('newTaskModal')">+ Add Task</button></div>
+        <div class="topbar-right"><button class="btn-quick-action" onclick="startNewHousekeepingTask()">+ Add Task</button></div>
       </header>
 
       <div class="page-content">
@@ -51,7 +51,7 @@
             <div class="table-responsive">
               <table class="pms-table">
                 <thead>
-                  <tr><th>Task ID</th><th>Room</th><th>Assigned Staff</th><th>Task Type</th><th>Scheduled</th><th>Status</th><th>Action</th></tr>
+                  <tr><th>Task ID</th><th>Room</th><th>Assigned Staff</th><th>Task Type</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="housekeepingTableBody"></tbody>
               </table>
@@ -64,7 +64,7 @@
 
   <div class="modal-backdrop" id="newTaskModal">
     <div class="modal-dialog">
-      <div class="modal-header"><h3 class="modal-title">Create Housekeeping Task</h3><button class="modal-close" onclick="closeModal('newTaskModal')">&times;</button></div>
+      <div class="modal-header"><h3 class="modal-title" id="taskModalTitle">Create Housekeeping Task</h3><button class="modal-close" onclick="closeModal('newTaskModal')">&times;</button></div>
       <form id="newHousekeepingForm">
         <div class="modal-body">
           <div class="form-grid">
@@ -72,11 +72,12 @@
             <div class="form-group"><label class="form-label" for="taskStaff">Staff Name</label><input type="text" id="taskStaff" class="form-control" required></div>
             <div class="form-group"><label class="form-label" for="taskType">Task Type</label><select id="taskType" class="form-control"><option>Daily Cleaning</option><option>Deep Cleaning</option><option>Inspection</option><option>Turn Down</option></select></div>
             <div class="form-group"><label class="form-label" for="taskDate">Scheduled Date</label><input type="date" id="taskDate" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="taskStatus">Status</label><select id="taskStatus" class="form-control"><option>Pending</option><option>In Progress</option><option>Completed</option></select></div>
           </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeModal('newTaskModal')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Add Task</button>
+          <button type="submit" class="btn btn-primary" id="taskSubmitButton">Add Task</button>
         </div>
       </form>
     </div>

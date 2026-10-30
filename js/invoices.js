@@ -11,6 +11,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   renderInvoicesTable();
   setupInvoiceForm();
+  setupPaymentForm();
+  bindActionMenu(document.getElementById('invoicesTableBody'), (action, invoiceId) => {
+    if (action === 'pay') markInvoicePaid(invoiceId);
+  });
   renderBookingOptions();
   renderServiceOptions();
   renderFoodOrderOptions();
@@ -33,19 +37,21 @@ function renderInvoicesTable() {
   tableBody.innerHTML = invoices.map(invoice => `
     <tr>
       <td>${invoice.invoiceId}</td>
-      <td>${invoice.guestName || ''}</td>
-      <td>${invoice.bookingId || ''}</td>
-      <td>${invoice.roomNo || ''}</td>
+      <td>${escapeHtml(invoice.guestName || '')}</td>
+      <td>${escapeHtml(invoice.bookingId || '')}</td>
+      <td>${escapeHtml(invoice.roomNo || '')}</td>
       <td>₹${Number(invoice.subtotal ?? (Number(invoice.roomCharges || 0) + Number(invoice.serviceCharges || 0))).toLocaleString('en-IN')}</td>
       <td>₹${Number(invoice.cgst || 0).toLocaleString('en-IN')}</td>
       <td>₹${Number(invoice.sgst || 0).toLocaleString('en-IN')}</td>
       <td><strong>₹${Number(invoice.total).toLocaleString('en-IN')}</strong></td>
       <td><span class="status-badge ${String(invoice.status).toLowerCase().replace(/\s+/g, '-')}">${invoice.status}</span></td>
-      <td>${invoice.status === 'Paid' ? invoice.paymentMethod || 'Paid' : `<button class="btn btn-sm btn-secondary" onclick="markInvoicePaid('${invoice.invoiceId}')">Mark Paid</button>`}</td>
+      <td>${invoice.status === 'Paid'
+    ? invoice.paymentMethod || 'Paid'
+    : renderActionMenu(invoice.invoiceId, [{ action: 'pay', label: 'Record payment' }])}</td>
     </tr>
     ${invoice.lines && invoice.lines.length ? `
       <tr><td colspan="10" style="padding:6px 16px;color:var(--text-muted);font-size:0.8rem;">
-        ${invoice.lines.map(line => `${line.description} × ${line.quantity}: ₹${Number(line.total).toLocaleString('en-IN')}`).join(' · ')}
+        ${invoice.lines.map(line => `${escapeHtml(line.description)} × ${escapeHtml(line.quantity)}: ₹${Number(line.total).toLocaleString('en-IN')}`).join(' · ')}
       </td></tr>` : ''}
   `).join('');
 }
@@ -53,7 +59,7 @@ function renderInvoicesTable() {
 function renderBookingOptions() {
   const select = document.getElementById('invoiceBooking');
   select.innerHTML = '<option value="">Select a booking</option>' + invoiceOptions.bookings.map(booking =>
-    `<option value="${booking.bookingId}">${booking.bookingId} — ${booking.guestName}, room ${booking.roomNo} (${booking.checkIn} to ${booking.checkOut})</option>`
+    `<option value="${escapeHtml(booking.bookingId)}">${escapeHtml(booking.bookingId)} — ${escapeHtml(booking.guestName)}, room ${escapeHtml(booking.roomNo)} (${escapeHtml(booking.checkIn)} to ${escapeHtml(booking.checkOut)})</option>`
   ).join('');
 }
 
@@ -114,20 +120,26 @@ function setupInvoiceForm() {
   });
 }
 
-async function markInvoicePaid(invoiceId) {
-  const paymentMethod = prompt('Enter payment method: Cash, Credit Card, Debit Card, UPI, or Net Banking');
-  if (paymentMethod === null) return;
-  const acceptedMethods = ['Cash', 'Credit Card', 'Debit Card', 'UPI', 'Net Banking'];
-  if (!acceptedMethods.includes(paymentMethod.trim())) {
-    showToast('Choose Cash, Credit Card, Debit Card, UPI, or Net Banking.', 'error');
-    return;
-  }
+function markInvoicePaid(invoiceId) {
+  document.getElementById('paymentInvoiceId').value = invoiceId;
+  document.getElementById('paymentMethod').value = '';
+  openModal('paymentModal');
+}
 
-  try {
-    const result = await HotelStore.payInvoice(invoiceId, paymentMethod.trim());
-    renderInvoicesTable();
-    notifyMongoSyncStatus(result.mongoSynced, 'Payment recorded in PostgreSQL.');
-  } catch (error) {
-    showToast(`Could not record payment: ${error.message}`, 'error');
-  }
+function setupPaymentForm() {
+  const form = document.getElementById('paymentForm');
+  if (!form) return;
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const invoiceId = document.getElementById('paymentInvoiceId').value;
+    const paymentMethod = document.getElementById('paymentMethod').value;
+    try {
+      const result = await HotelStore.payInvoice(invoiceId, paymentMethod);
+      closeModal('paymentModal');
+      renderInvoicesTable();
+      notifyMongoSyncStatus(result.mongoSynced, 'Payment recorded in PostgreSQL.');
+    } catch (error) {
+      showToast(`Could not record payment: ${error.message}`, 'error');
+    }
+  });
 }

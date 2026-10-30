@@ -64,7 +64,7 @@
         </div>
 
         <div class="topbar-right">
-          <button class="btn-quick-action" onclick="openModal('newGuestModal')">
+          <button class="btn-quick-action" onclick="startNewGuest()">
             + Register New Guest
           </button>
         </div>
@@ -96,7 +96,7 @@
                     <th>City / Location</th>
                     <th>ID Document</th>
                     <th>Guest Status</th>
-                    <th>Action</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="guestTableBody">
@@ -114,7 +114,7 @@
   <div class="modal-backdrop" id="newGuestModal">
     <div class="modal-dialog" style="max-width: 640px;">
       <div class="modal-header">
-        <h3 class="modal-title">Register Guest Profile</h3>
+        <h3 class="modal-title" id="guestModalTitle">Register Guest Profile</h3>
         <button class="modal-close" onclick="closeModal('newGuestModal')">&times;</button>
       </div>
       <form id="newGuestForm">
@@ -191,7 +191,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeModal('newGuestModal')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Guest Record</button>
+          <button type="submit" class="btn btn-primary" id="guestSubmitButton">Save Guest Record</button>
         </div>
       </form>
     </div>

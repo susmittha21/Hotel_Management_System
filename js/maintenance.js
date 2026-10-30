@@ -1,3 +1,5 @@
+let editingIssueId = null;
+
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     await HotelStore.initialize();
@@ -8,6 +10,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   renderMaintenanceTable();
   setupIssueForm();
+  bindActionMenu(document.getElementById('maintenanceTableBody'), (action, issueId) => {
+    if (action === 'edit') editMaintenanceIssue(issueId);
+    if (action === 'delete') deleteMaintenanceIssue(issueId);
+    if (action === 'resolve') markIssueResolved(issueId);
+  });
 });
 
 function renderMaintenanceTable() {
@@ -28,7 +35,11 @@ function renderMaintenanceTable() {
       <td><span class="priority-pill ${issue.priority.toLowerCase()}">${issue.priority}</span></td>
       <td>${issue.assignedTo}</td>
       <td><span class="status-badge ${issue.status.toLowerCase().replace(/\s+/g, '-')}">${issue.status}</span></td>
-      <td><button class="btn btn-sm btn-secondary" onclick="markIssueResolved('${issue.issueId}')">Resolve</button></td>
+      <td>${renderActionMenu(issue.issueId, [
+        { action: 'edit', label: 'Edit issue' },
+        ...(issue.status === 'Resolved' ? [] : [{ action: 'resolve', label: 'Mark resolved' }]),
+        { action: 'delete', label: 'Delete issue' }
+      ])}</td>
     </tr>
   `).join('');
 }
@@ -39,23 +50,61 @@ function setupIssueForm() {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const issues = HotelStore.getMaintenance();
+    const issueId = editingIssueId || `MI-${crypto.randomUUID().slice(0, 16).toUpperCase()}`;
     const issue = {
-      issueId: `MI-${Date.now().toString().slice(-5)}`,
+      issueId,
       roomNo: document.getElementById('issueRoomNo').value.trim(),
       issueType: document.getElementById('issueType').value.trim(),
       priority: document.getElementById('issuePriority').value,
       assignedTo: document.getElementById('issueStaff').value.trim(),
-      status: 'Open'
+      status: document.getElementById('issueStatus').value
     };
 
-    const issues = HotelStore.getMaintenance();
-    issues.push(issue);
+    const existingIndex = issues.findIndex(item => item.issueId === editingIssueId);
+    if (existingIndex >= 0) issues[existingIndex] = issue;
+    else issues.push(issue);
     if (await HotelStore.saveMaintenance(issues) === false) return;
+    const wasEditing = Boolean(editingIssueId);
+    editingIssueId = null;
     form.reset();
     closeModal('newIssueModal');
+    document.getElementById('issueModalTitle').textContent = 'Report Room Issue';
+    document.getElementById('issueSubmitButton').textContent = 'Save Issue';
     renderMaintenanceTable();
-    showToast(`Issue ${issue.issueId} filed.`, 'success');
+    showToast(`Issue ${issue.issueId} ${wasEditing ? 'updated' : 'filed'}.`, 'success');
   });
+}
+
+function editMaintenanceIssue(issueId) {
+  const issue = HotelStore.getMaintenance().find(item => item.issueId === issueId);
+  if (!issue) return;
+  editingIssueId = issueId;
+  document.getElementById('issueRoomNo').value = issue.roomNo || '';
+  document.getElementById('issueType').value = issue.issueType || '';
+  document.getElementById('issuePriority').value = issue.priority || 'Medium';
+  document.getElementById('issueStaff').value = issue.assignedTo || '';
+  document.getElementById('issueStatus').value = issue.status || 'Open';
+  document.getElementById('issueModalTitle').textContent = `Edit Issue ${issueId}`;
+  document.getElementById('issueSubmitButton').textContent = 'Save Changes';
+  openModal('newIssueModal');
+}
+
+function startNewMaintenanceIssue() {
+  editingIssueId = null;
+  document.getElementById('newIssueForm').reset();
+  document.getElementById('issueStatus').value = 'Open';
+  document.getElementById('issueModalTitle').textContent = 'Report Room Issue';
+  document.getElementById('issueSubmitButton').textContent = 'Save Issue';
+  openModal('newIssueModal');
+}
+
+async function deleteMaintenanceIssue(issueId) {
+  if (!confirm(`Delete maintenance issue ${issueId}?`)) return;
+  const updated = HotelStore.getMaintenance().filter(issue => issue.issueId !== issueId);
+  if (await HotelStore.saveMaintenance(updated) === false) return;
+  renderMaintenanceTable();
+  showToast(`Issue ${issueId} deleted.`, 'info');
 }
 
 async function markIssueResolved(issueId) {
