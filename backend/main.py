@@ -7,6 +7,8 @@ import re
 import threading
 import time
 import json
+import urllib.error
+import urllib.request
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
@@ -30,6 +32,7 @@ from backend.mongo_store import (
 )
 from backend.storage import (
     create_public_booking,
+    create_public_booking_for_type,
     create_invoice,
     dashboard_analytics,
     ensure_extension_tables,
@@ -131,20 +134,95 @@ class StaffBookingRequest(BaseModel):
 class GuestBookingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    roomNo: str = Field(min_length=1, max_length=10)
+    roomType: str = Field(min_length=1, max_length=50)
     checkIn: date
     checkOut: date
     guestsCount: int = Field(ge=1, le=8)
     specialRequests: str | None = Field(default=None, max_length=1000)
-    paymentMethod: Literal["UPI", "Credit Card", "Net Banking"]
-    upiScanConfirmed: bool = False
+    razorpayOrderId: str = Field(min_length=1, max_length=40)
+    razorpayPaymentId: str = Field(min_length=1, max_length=40)
+    razorpaySignature: str = Field(min_length=1, max_length=128)
 
-    @field_validator("roomNo")
+    @field_validator("roomType")
     @classmethod
-    def validate_room_number(cls, value: str) -> str:
-        if not re.fullmatch(r"[A-Za-z0-9-]{1,10}", value):
-            raise ValueError("Choose a valid room number.")
+    def validate_room_type(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9 &-]{1,50}", value):
+            raise ValueError("Choose a valid room type.")
         return value
+
+
+class GuestRazorpayOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    roomType: str = Field(min_length=1, max_length=50)
+    checkIn: date
+    checkOut: date
+    guestsCount: int = Field(ge=1, le=8)
+    specialRequests: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("roomType")
+    @classmethod
+    def validate_room_type(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9 &-]{1,50}", value):
+            raise ValueError("Choose a valid room type.")
+        return value
+
+
+class RazorpayGatewayError(RuntimeError):
+    pass
+
+
+def _razorpay_credentials() -> tuple[str, str]:
+    key_id = os.getenv("RAZORPAY_KEY_ID", "").strip()
+    key_secret = os.getenv("RAZORPAY_KEY_SECRET", "").strip()
+    if not key_id.startswith("rzp_test_") or not key_secret:
+        raise RazorpayGatewayError(
+            "Razorpay test mode is not configured. Set RAZORPAY_KEY_ID and "
+            "RAZORPAY_KEY_SECRET with Razorpay test credentials in the backend environment."
+        )
+    return key_id, key_secret
+
+
+def _razorpay_request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    key_id, key_secret = _razorpay_credentials()
+    token = base64.b64encode(f"{key_id}:{key_secret}".encode("utf-8")).decode("ascii")
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        f"https://api.razorpay.com/v1/{path.lstrip('/')}",
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Basic {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        try:
+            body = json.loads(error.read().decode("utf-8"))
+            message = body.get("error", {}).get("description", "Razorpay rejected the request.")
+        except (json.JSONDecodeError, AttributeError):
+            message = "Razorpay rejected the request."
+        raise RazorpayGatewayError(str(message)[:240]) from None
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        logger.exception("Razorpay test gateway request failed")
+        raise RazorpayGatewayError("Could not reach Razorpay test mode. Please try again.") from None
+    if not isinstance(result, dict):
+        raise RazorpayGatewayError("Razorpay returned an invalid response.")
+    return result
+
+
+def _verify_razorpay_signature(order_id: str, payment_id: str, signature: str) -> bool:
+    _, key_secret = _razorpay_credentials()
+    expected = hmac.new(
+        key_secret.encode("utf-8"),
+        f"{order_id}|{payment_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 def _normalize_guest_email(value: str) -> str:
@@ -695,9 +773,14 @@ def get_guest_account(user: dict[str, str] = Depends(current_user)):
         guest = next((record for record in data["guests"] if record["guestId"] == guest_id), None)
         if guest is None:
             raise HTTPException(status_code=404, detail="Guest account not found.")
+        bookings = [
+            {key: value for key, value in record.items() if key != "roomNo"}
+            for record in data["bookings"]
+            if record["guestId"] == guest_id
+        ]
         return {
             "guest": guest,
-            "bookings": [record for record in data["bookings"] if record["guestId"] == guest_id],
+            "bookings": bookings,
             "services": data["services"],
             "serviceRequests": [
                 record for record in data["service_requests"] if record["guestId"] == guest_id
@@ -807,19 +890,103 @@ def get_public_availability(
                     connection, schema, check_in, check_out, guests_count, room_type or None
                 )
         nights = (check_out - check_in).days
+        room_types: dict[str, dict[str, Any]] = {}
         for room in rooms:
-            subtotal = Decimal(str(room["price"])) * nights
+            option = room_types.setdefault(
+                room["type"],
+                {
+                    "type": room["type"],
+                    "capacity": room["capacity"],
+                    "price": room["price"],
+                },
+            )
+            option["capacity"] = max(option["capacity"], room["capacity"])
+            option["price"] = min(option["price"], room["price"])
+        for option in room_types.values():
+            subtotal = Decimal(str(option["price"])) * nights
             half_tax = (subtotal * gst_rate / 2).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
-            room["nights"] = nights
-            room["subtotal"] = float(subtotal)
-            room["taxAmount"] = float(half_tax * 2)
-            room["totalAmount"] = float(subtotal + half_tax * 2)
-        return {"rooms": rooms, "gstRate": float(gst_percent)}
+            option["nights"] = nights
+            option["subtotal"] = float(subtotal)
+            option["taxAmount"] = float(half_tax * 2)
+            option["totalAmount"] = float(subtotal + half_tax * 2)
+        return {"rooms": list(room_types.values()), "gstRate": float(gst_percent)}
     except (SQLAlchemyError, RuntimeError, ValueError):
         logger.exception("Unable to load public room availability")
         raise HTTPException(status_code=503, detail="Unable to check room availability right now.") from None
+
+
+@app.post("/api/guest/razorpay/orders")
+def create_guest_razorpay_order(
+    payload: GuestRazorpayOrderRequest,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Guest"})
+    if payload.checkIn < date.today() or payload.checkOut <= payload.checkIn:
+        raise HTTPException(status_code=422, detail="Choose a future check-in date and a later check-out date.")
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().connect() as connection:
+                available = public_available_rooms(
+                    connection,
+                    schema,
+                    payload.checkIn,
+                    payload.checkOut,
+                    payload.guestsCount,
+                    payload.roomType,
+                )
+        if not available:
+            raise HTTPException(status_code=409, detail="No room of the selected type is available for those dates.")
+        nights = (payload.checkOut - payload.checkIn).days
+        subtotal = Decimal(str(available[0]["price"])) * nights
+        gst = configured_gst_rate() / 100
+        half_tax = (subtotal * gst / 2).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        total = subtotal + half_tax * 2
+        amount_paise = int((total * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        order = _razorpay_request(
+            "POST",
+            "/orders",
+            {
+                "amount": amount_paise,
+                "currency": "INR",
+                "receipt": f"guest-{uuid4().hex[:24]}",
+                "notes": {
+                    "guest_id": user["guestId"],
+                    "room_type": payload.roomType,
+                    "check_in": payload.checkIn.isoformat(),
+                    "check_out": payload.checkOut.isoformat(),
+                    "guests_count": str(payload.guestsCount),
+                },
+            },
+        )
+        if order.get("currency") != "INR" or order.get("amount") != amount_paise:
+            raise RazorpayGatewayError("Razorpay returned an order with an unexpected amount or currency.")
+        key_id, _ = _razorpay_credentials()
+        return {
+            "keyId": key_id,
+            "orderId": order["id"],
+            "amount": amount_paise,
+            "currency": "INR",
+            "roomType": payload.roomType,
+            "nights": nights,
+            "subtotal": float(subtotal),
+            "taxAmount": float(half_tax * 2),
+            "totalAmount": float(total),
+            "paymentMode": "test",
+        }
+    except HTTPException:
+        raise
+    except RazorpayGatewayError as error:
+        logger.warning("Unable to create Razorpay test order: %s", error)
+        raise HTTPException(status_code=503, detail=str(error)) from None
+    except (SQLAlchemyError, RuntimeError, ValueError, KeyError):
+        logger.exception("Unable to create a Razorpay test order")
+        raise HTTPException(status_code=503, detail="Unable to start Razorpay checkout right now.") from None
 
 
 @app.post("/api/guest/bookings", status_code=201)
@@ -830,19 +997,61 @@ def create_guest_booking(
 ):
     _verify_origin(request)
     _require_role(user, {"Guest"})
-    if payload.paymentMethod == "UPI" and not payload.upiScanConfirmed:
-        raise HTTPException(status_code=422, detail="Scan the no-charge UPI QR and confirm the scan before completing the reservation.")
     if payload.checkIn < date.today() or payload.checkOut <= payload.checkIn:
         raise HTTPException(status_code=422, detail="Choose a future check-in date and a later check-out date.")
     try:
+        if not re.fullmatch(r"order_[A-Za-z0-9]+", payload.razorpayOrderId):
+            raise HTTPException(status_code=422, detail="Invalid Razorpay order.")
+        if not re.fullmatch(r"pay_[A-Za-z0-9]+", payload.razorpayPaymentId):
+            raise HTTPException(status_code=422, detail="Invalid Razorpay payment.")
+        if not _verify_razorpay_signature(
+            payload.razorpayOrderId, payload.razorpayPaymentId, payload.razorpaySignature
+        ):
+            raise HTTPException(status_code=422, detail="Razorpay payment signature could not be verified.")
+        order = _razorpay_request("GET", f"/orders/{payload.razorpayOrderId}")
+        notes = order.get("notes") or {}
+        expected_notes = {
+            "guest_id": user["guestId"],
+            "room_type": payload.roomType,
+            "check_in": payload.checkIn.isoformat(),
+            "check_out": payload.checkOut.isoformat(),
+            "guests_count": str(payload.guestsCount),
+        }
+        if any(notes.get(key) != value for key, value in expected_notes.items()):
+            raise HTTPException(status_code=422, detail="This Razorpay order does not match your reservation.")
+        payment = _razorpay_request("GET", f"/payments/{payload.razorpayPaymentId}")
+        if (
+            payment.get("order_id") != payload.razorpayOrderId
+            or payment.get("amount") != order.get("amount")
+            or payment.get("currency") != "INR"
+        ):
+            raise HTTPException(status_code=422, detail="Razorpay payment details do not match this order.")
+        if payment.get("status") == "authorized":
+            _razorpay_request(
+                "POST",
+                f"/payments/{payload.razorpayPaymentId}/capture",
+                {"amount": payment["amount"], "currency": "INR"},
+            )
+            payment = _razorpay_request("GET", f"/payments/{payload.razorpayPaymentId}")
+        if payment.get("status") != "captured":
+            raise HTTPException(status_code=409, detail="Razorpay has not confirmed this payment.")
+        payment_methods = {
+            "upi": "UPI",
+            "card": "Credit Card",
+            "netbanking": "Net Banking",
+        }
+        payment_method = payment_methods.get(payment.get("method"))
+        if payment_method is None:
+            raise HTTPException(status_code=422, detail="This Razorpay payment method is not supported.")
+
         schema = database_settings()["schema"]
         with _database_sync_lock:
             ensure_database_schema(schema)
             with get_engine().begin() as connection:
-                booking = create_public_booking(
+                booking = create_public_booking_for_type(
                     connection,
                     schema,
-                    room_number=payload.roomNo,
+                    room_type=payload.roomType,
                     guest_id=user["guestId"],
                     check_in=payload.checkIn,
                     check_out=payload.checkOut,
@@ -858,21 +1067,35 @@ def create_guest_booking(
                     [],
                     configured_gst_rate() / 100,
                 )
+                expected_amount = int(
+                    (Decimal(str(invoice["total"])) * 100).quantize(
+                        Decimal("1"), rounding=ROUND_HALF_UP
+                    )
+                )
+                if expected_amount != order["amount"]:
+                    raise ValueError("The room price changed after checkout started. Please check availability and try again.")
                 payment_transaction_id = settle_invoice(
                     connection,
                     schema,
                     invoice["invoiceId"],
-                    payload.paymentMethod,
+                    payment_method,
                     no_charge=True,
+                    payment_reference=f"RAZORPAY-TEST-{payload.razorpayPaymentId}",
                 )
             booking["paymentStatus"] = "Paid"
             booking["invoiceId"] = invoice["invoiceId"]
-            booking["paymentMethod"] = payload.paymentMethod
-            booking["paymentNote"] = "No money was charged."
+            booking["paymentMethod"] = payment_method
+            booking["paymentNote"] = "Razorpay test payment. No money was charged."
             booking["paymentTransactionId"] = payment_transaction_id
             booking["paidAmount"] = invoice["total"]
+            booking.pop("roomNo", None)
             booking["mongoSynced"] = try_synchronize_mongo(schema)
         return booking
+    except HTTPException:
+        raise
+    except RazorpayGatewayError as error:
+        logger.warning("Unable to verify Razorpay test payment: %s", error)
+        raise HTTPException(status_code=503, detail=str(error)) from None
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from None
     except IntegrityError:

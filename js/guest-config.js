@@ -1,1 +1,1 @@
-window.HOTEL_FOOD_ORDER_URL = 'http://10.10.32.175:5173/';
+window.HOTEL_FOOD_ORDER_URL = 'https://www.zomato.com/';

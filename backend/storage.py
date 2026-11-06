@@ -299,7 +299,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
         text(
             f"""
             SELECT b.booking_id, b.guest_id, g.first_name || ' ' || g.last_name AS guest_name,
-                   r.room_number, b.booking_date, b.check_in_date, b.check_out_date,
+                   r.room_number, rt.type_name, b.booking_date, b.check_in_date, b.check_out_date,
                    b.number_of_guests, b.booking_status, b.booking_source,
                    b.special_requests, b.total_tariff,
                    (
@@ -329,13 +329,15 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                            WHERE i.booking_id=b.booking_id
                              AND p.payment_status='Completed'
                              AND (p.payment_reference LIKE 'NOCHARGE-%'
-                                  OR p.payment_reference LIKE 'DEMO-%')
-                       ) THEN 'No money was charged.'
+                                  OR p.payment_reference LIKE 'DEMO-%'
+                                  OR p.payment_reference LIKE 'RAZORPAY-TEST-%')
+                       ) THEN 'Test payment. No money was charged.'
                        ELSE NULL
                    END AS payment_note
             FROM "{schema}".booking b
             JOIN "{schema}".guest g ON g.guest_id = b.guest_id
             JOIN "{schema}".room r ON r.room_id = b.room_id
+            LEFT JOIN "{schema}".room_type rt ON rt.room_type_id = r.room_type_id
             ORDER BY b.booking_date DESC, b.booking_id
             """
         )
@@ -378,7 +380,8 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                 SELECT payment_method, payment_date,
                        CASE WHEN payment_reference LIKE 'NOCHARGE-%'
                                   OR payment_reference LIKE 'DEMO-%'
-                            THEN 'No money was charged.'
+                                  OR payment_reference LIKE 'RAZORPAY-TEST-%'
+                            THEN 'Test payment. No money was charged.'
                             ELSE NULL END AS payment_note
                 FROM "{schema}".payment
                 WHERE invoice_id=i.invoice_id AND payment_status='Completed'
@@ -488,6 +491,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "guestId": row["guest_id"],
                     "guestName": row["guest_name"],
                     "roomNo": row["room_number"],
+                    "roomType": row["type_name"] or "Standard",
                     "bookingDate": row["booking_date"],
                     "checkIn": row["check_in_date"],
                     "checkOut": row["check_out_date"],
@@ -883,6 +887,7 @@ def settle_invoice(
     payment_method: str,
     *,
     no_charge: bool = False,
+    payment_reference: str | None = None,
 ) -> str:
     invoice = connection.execute(
         text(
@@ -911,7 +916,10 @@ def settle_invoice(
             "booking_id": invoice["booking_id"],
             "amount": invoice["total_amount"],
             "method": payment_method,
-            "payment_reference": f"NOCHARGE-{payment_id}" if no_charge else None,
+            "payment_reference": (
+                payment_reference
+                or (f"NOCHARGE-{payment_id}" if no_charge else None)
+            ),
         },
     )
     connection.execute(
@@ -942,6 +950,7 @@ def dashboard_analytics(connection: Connection, schema: str) -> dict[str, Any]:
                          AND payment_date::date=CURRENT_DATE
                          AND COALESCE(payment_reference, '') NOT LIKE 'NOCHARGE-%'
                          AND COALESCE(payment_reference, '') NOT LIKE 'DEMO-%'
+                         AND COALESCE(payment_reference, '') NOT LIKE 'RAZORPAY-TEST-%'
                    ) AS revenue_today
             FROM "{schema}".room
             """
@@ -1048,6 +1057,61 @@ def public_available_rooms(
         }
         for row in rows
     ]
+
+
+def create_public_booking_for_type(
+    connection: Connection,
+    schema: str,
+    *,
+    room_type: str,
+    guest_id: str,
+    check_in: date,
+    check_out: date,
+    guests_count: int,
+    special_requests: str | None,
+    booking_source: str = "Website",
+) -> dict[str, Any]:
+    room = connection.execute(
+        text(
+            f"""
+            SELECT r.room_number
+            FROM "{schema}".room r
+            LEFT JOIN "{schema}".room_type rt ON rt.room_type_id=r.room_type_id
+            WHERE COALESCE(rt.type_name, 'Standard')=:room_type
+              AND r.room_status IN ('Available', 'Reserved')
+              AND r.capacity >= :guests_count
+              AND NOT EXISTS (
+                  SELECT 1 FROM "{schema}".booking b
+                  WHERE b.room_id=r.room_id
+                    AND b.booking_status <> 'Cancelled'
+                    AND b.check_in_date < :check_out
+                    AND b.check_out_date > :check_in
+              )
+            ORDER BY r.price, r.room_number
+            LIMIT 1
+            FOR UPDATE OF r SKIP LOCKED
+            """
+        ),
+        {
+            "room_type": room_type,
+            "guests_count": guests_count,
+            "check_in": check_in,
+            "check_out": check_out,
+        },
+    ).mappings().one_or_none()
+    if room is None:
+        raise ValueError("No room of the selected type is still available for those dates.")
+    return create_public_booking(
+        connection,
+        schema,
+        room_number=room["room_number"],
+        guest_id=guest_id,
+        check_in=check_in,
+        check_out=check_out,
+        guests_count=guests_count,
+        special_requests=special_requests,
+        booking_source=booking_source,
+    )
 
 
 def create_public_booking(
@@ -1536,7 +1600,9 @@ def _save_invoices(connection: Connection, schema: str, records: list[dict[str, 
             )
         if database_status == "Paid":
             displayed_method = record.get("paymentMethod")
-            no_charge = record.get("paymentNote") == "No money was charged."
+            payment_note = record.get("paymentNote") or ""
+            test_payment = payment_note.startswith(("Razorpay test payment.", "Test payment."))
+            no_charge = payment_note == "No money was charged." or test_payment
             method = displayed_method
             valid_methods = {"Cash", "Credit Card", "Debit Card", "UPI", "Net Banking"}
             if method not in valid_methods:
@@ -1548,7 +1614,11 @@ def _save_invoices(connection: Connection, schema: str, records: list[dict[str, 
                 "booking_id": values["booking_id"],
                 "amount": values["total"],
                 "method": method,
-                "payment_reference": f"NOCHARGE-{payment_id}" if no_charge else None,
+                "payment_reference": (
+                    f"RAZORPAY-TEST-{payment_id}"
+                    if test_payment
+                    else f"NOCHARGE-{payment_id}" if no_charge else None
+                ),
             }
             connection.execute(
                 text(

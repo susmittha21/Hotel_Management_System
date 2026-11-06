@@ -32,7 +32,7 @@
         <div>
           <span class="guest-step-label">01 · PLAN YOUR STAY</span>
           <h2>Reserve a Room</h2>
-          <p class="guest-muted">Choose your dates and party size to discover available rooms.</p>
+          <p class="guest-muted">Choose your dates and party size to see available room types.</p>
         </div>
       </div>
       <form id="guestBookingForm">
@@ -62,38 +62,31 @@
             <button id="guestCheckAvailability" class="btn btn-primary" type="button">Check Availability <span aria-hidden="true">&rarr;</span></button>
             <span class="guest-muted">Room options and pricing will appear below.</span>
           </div>
-          <div class="form-group">
-            <label class="form-label" for="guestAvailableRooms">Available Room</label>
+          <div class="form-group" style="grid-column: 1 / -1;">
+            <label class="form-label" for="guestAvailableRooms">Available Room Types</label>
             <select class="form-control" id="guestAvailableRooms" required disabled>
-              <option value="">Check availability to choose a room</option>
+              <option value="">Check availability to choose a room type</option>
             </select>
+            <div id="guestRoomPreview" class="guest-room-preview" hidden>
+              <img id="guestRoomImage" alt="">
+              <div>
+                <span id="guestRoomTypeLabel" class="guest-step-label"></span>
+                <p id="guestRoomDescription" class="guest-muted"></p>
+                <p id="guestRoomQuote" class="guest-room-quote"></p>
+              </div>
+            </div>
           </div>
           <div class="form-group" style="grid-column: 1 / -1;">
             <h3>Payment</h3>
-            <p class="guest-muted">Payment will be marked complete for your reservation and invoice. No money will be charged, and no card or bank details are collected.</p>
-            <label class="form-label" for="guestPaymentMethod">Payment option</label>
-            <select class="form-control" id="guestPaymentMethod" required disabled>
-              <option value="">Choose a payment option</option>
-              <option value="UPI">UPI</option>
-              <option value="Credit Card">Credit Card</option>
-              <option value="Net Banking">Net Banking</option>
-            </select>
+            <p class="guest-muted">Checkout opens Razorpay in test mode. A verified test payment completes your reservation; no real money is charged.</p>
             <p id="guestPaymentSummary" class="guest-muted" aria-live="polite">Check availability and select a room to see the total.</p>
-            <div id="guestUpiQrPanel" class="guest-upi-qr-panel" hidden>
-              <img id="guestUpiQrImage" alt="No-charge UPI scan simulation QR code">
-              <div>
-                <p class="guest-muted">Scan this no-charge QR with your phone camera. It does not open a UPI payment or transfer money. After scanning, confirm below to complete the reservation.</p>
-                <button id="guestUpiScanConfirm" class="btn btn-secondary" type="button">I scanned the QR</button>
-                <p id="guestUpiScanStatus" class="guest-muted" aria-live="polite"></p>
-              </div>
-            </div>
           </div>
           <div class="form-group" style="grid-column: 1 / -1;">
             <label class="form-label" for="guestBookingNotes">Special Requests (optional)</label>
             <textarea class="form-control" id="guestBookingNotes" maxlength="1000" rows="2"></textarea>
           </div>
           <div class="guest-form-actions">
-            <button id="guestReserveButton" class="btn btn-primary" type="submit" disabled>Pay &amp; Confirm Reservation</button>
+            <button id="guestReserveButton" class="btn btn-primary" type="submit" disabled>Continue to Razorpay Test Checkout</button>
           </div>
         </div>
       </form>
@@ -104,7 +97,7 @@
       <h2>My Reservations</h2>
       <div class="guest-table-wrap">
         <table class="guest-table">
-          <thead><tr><th>Reservation</th><th>Room</th><th>Dates</th><th>Guests</th><th>Status</th><th>Payment</th><th>Paid Amount</th><th>Invoice</th></tr></thead>
+          <thead><tr><th>Reservation</th><th>Room Type</th><th>Dates</th><th>Guests</th><th>Status</th><th>Payment</th><th>Paid Amount</th><th>Invoice</th></tr></thead>
           <tbody id="guestBookingsBody"></tbody>
         </table>
       </div>
@@ -184,14 +177,14 @@
 
     <section class="guest-card">
       <h2>Order Food</h2>
-      <p class="guest-muted">Use the hotel’s online ordering service.</p>
-      <a id="guestFoodOrderLink" class="btn btn-primary guest-food-link" href="#" aria-disabled="true">Online food ordering link coming soon</a>
+      <p class="guest-muted">Browse nearby restaurants and order through Zomato.</p>
+      <a id="guestFoodOrderLink" class="btn btn-primary guest-food-link" href="#" aria-disabled="true">Order with Zomato</a>
     </section>
   </main>
 
   <script src="../js/app.js"></script>
   <script src="../js/guest-config.js"></script>
-  <script src="../node_modules/qrcode-generator/dist/qrcode.js"></script>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   <script src="../js/guest-dashboard.js"></script>
 </body>
 </html>

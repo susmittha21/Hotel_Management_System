@@ -356,7 +356,7 @@
   padding-top: 4px;
 }
 
-.guest-booking-card #guestReserveButton {
+.guest-card #guestReserveButton {
   min-height: 46px;
   border-radius: 9px;
   padding: 0 22px;
@@ -409,7 +409,7 @@
   align-items: center;
 }
 
-.guest-upi-qr-panel {
+.guest-room-preview {
   align-items: center;
   background: #f7f8f5;
   border: 1px solid #e5eae4;
@@ -421,26 +421,36 @@
   padding: 16px;
 }
 
-.guest-upi-qr-panel[hidden] {
+.guest-room-preview[hidden] {
   display: none;
 }
 
-.guest-upi-qr-panel img {
+.guest-room-preview img {
   background: #fff;
   border: 1px solid #e5eae4;
   border-radius: 8px;
-  height: 190px;
-  image-rendering: pixelated;
-  padding: 8px;
-  width: 190px;
+  height: 170px;
+  object-fit: cover;
+  width: 250px;
 }
 
-.guest-upi-qr-panel > div {
+.guest-room-preview > div {
   flex: 1 1 280px;
 }
 
-.guest-upi-qr-panel .guest-muted {
+.guest-room-preview .guest-muted {
   margin: 0 0 12px;
+}
+
+.guest-room-quote {
+  margin: 0;
+  color: #203b39;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.guest-booking-card #guestReserveButton {
+  min-width: 230px;
 }
 
 .guest-message {
