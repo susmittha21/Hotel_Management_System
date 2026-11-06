@@ -1027,7 +1027,10 @@ def public_available_rooms(
             LEFT JOIN "{schema}".room_type rt ON rt.room_type_id=r.room_type_id
             WHERE r.room_status IN ('Available', 'Reserved')
               AND r.capacity >= :guests_count
-              AND (CAST(:room_type AS TEXT) IS NULL OR rt.type_name=:room_type)
+              AND (
+                  CAST(:room_type AS TEXT) IS NULL
+                  OR COALESCE(rt.type_name, 'Standard')=:room_type
+              )
               AND NOT EXISTS (
                   SELECT 1 FROM "{schema}".booking b
                   WHERE b.room_id=r.room_id

@@ -1,6 +1,6 @@
 # VS PLAZA Hotel Management System - Web Transition & DBMS Integration Guide
 
-An academic Property Management System (PMS) built with semantic HTML5, CSS3, vanilla JavaScript, FastAPI, PostgreSQL, and MongoDB. PostgreSQL is the relational source of truth; the API mirrors application data to MongoDB.
+A Hotel Property Management System (PMS) built with semantic HTML5, CSS3, vanilla JavaScript, FastAPI, PostgreSQL, and optional MongoDB synchronization. PostgreSQL is the relational source of truth.
 
 ---
 
@@ -35,8 +35,7 @@ Open your browser and navigate to:
 http://localhost:3000
 ```
 
-### Option 2: Direct File Execution (No Dependencies)
-Simply double-click [`index.html`](index.html) to open the public landing page in any web browser.
+The website must be served over HTTP or HTTPS. Opening the HTML files directly with `file://` is not supported because browser session cookies and API requests require an HTTP origin.
 
 ### Backend Database Purpose
 This frontend is designed as a hotel operations UI for a real backend database system:
@@ -73,7 +72,7 @@ If the login page reports that it cannot reach the hotel API, start the FastAPI 
 
 #### Staff login and permissions
 
-Set a unique username and password for each role in `.env`. Passwords must be at least 12 characters. Leave unused role pairs blank. Generate a session signing key in PowerShell with:
+Set a unique username and password for each role in `.env`. Passwords must be at least 12 characters. Leave unused role pairs blank. The variable names are `PMS_MANAGER_USERNAME` / `PMS_MANAGER_PASSWORD`, `PMS_FRONT_DESK_USERNAME` / `PMS_FRONT_DESK_PASSWORD`, and `PMS_ACCOUNTS_USERNAME` / `PMS_ACCOUNTS_PASSWORD`. Generate a session signing key in PowerShell with:
 
 ```powershell
 py -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -82,6 +81,16 @@ py -c "import secrets; print(secrets.token_urlsafe(48))"
 Copy the output to `PMS_SESSION_SECRET`. Keep all account credentials and the session key private and out of Git. On the login screen, select the matching role, select PostgreSQL or MongoDB as the read database, then enter that role's username and password. The backend verifies the username/password against the selected role; the role is not just a visual preference. Writes always save to PostgreSQL first and are mirrored to MongoDB when it is reachable. MongoDB being offline does not block PostgreSQL use. The backend sets an HTTP-only session cookie and enforces role permissions. Use the same `localhost` hostname for both local servers (frontend `http://localhost:3000`). For HTTPS deployments, set `PMS_COOKIE_SECURE=true`, configure `CORS_ORIGINS` to the exact frontend origin, and set `window.HOTEL_API_BASE_URL` to the deployed API URL ending in `/api`.
 
 The database selector does not connect to a database on the browser's laptop. When using MongoDB, its endpoint must be network-accessible from the FastAPI computer. If your team has PostgreSQL and MongoDB on different laptops, configure `MONGO_URI` with the MongoDB laptop's reachable LAN/VPN address and restrict the database port to trusted devices; the frontend alone cannot synchronize two unreachable laptops.
+
+#### Deployment checklist
+
+- Serve the frontend and API over HTTPS. Set `window.HOTEL_API_BASE_URL` in `js/app.js` to the deployed API base URL ending in `/api`; do not leave the localhost default in a deployed build.
+- Set `CORS_ORIGINS` to the exact HTTPS frontend origin(s), without a wildcard. The browser sends the login cookie with API requests, so deploy frontend and API on the same site (for example, `hotel.example.com` and `api.example.com`) and keep credentials-enabled CORS.
+- Set `PMS_COOKIE_SECURE=true` in the production backend environment. Keep `.env` private and configure database credentials, at least one staff account, and a random `PMS_SESSION_SECRET` of 32 or more characters.
+- Run FastAPI behind a trusted HTTPS reverse proxy or managed application host; do not use `--reload` in production. Keep PostgreSQL private and reachable only by the backend. MongoDB remains optional unless users choose it at staff sign-in.
+- After deployment, verify `/` and `/api/health`, then exercise guest registration/sign-in, staff sign-in, availability, service requests, reviews, and invoice workflows against the deployed database.
+
+This project can be deployed as a web application when those environment and hosting requirements are met. Razorpay checkout is separately restricted to test credentials, so it does not collect real payments.
 
 #### Invoice calculation
 

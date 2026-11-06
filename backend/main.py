@@ -852,7 +852,6 @@ def create_guest_review(
             "guestId": user["guestId"],
             "guestName": booking["guest_name"],
             "bookingId": payload.bookingId,
-            "roomNo": booking["room_number"],
             "rating": payload.rating,
             "comment": payload.comment,
             "mongoSynced": mongo_synced,
@@ -1138,11 +1137,12 @@ def create_guest_service_request(
                     ).first()
                     if booking is None:
                         raise HTTPException(status_code=422, detail="Choose a reservation belonging to your account.")
-                connection.execute(
+                requested_at = connection.execute(
                     text(
                         f'INSERT INTO "{schema}".service_request '
                         "(request_id, guest_id, service_code, booking_id, notes) "
-                        "VALUES (:request_id, :guest_id, :service_id, :booking_id, :notes)"
+                        "VALUES (:request_id, :guest_id, :service_id, :booking_id, :notes) "
+                        "RETURNING requested_at"
                     ),
                     {
                         "request_id": request_id,
@@ -1151,7 +1151,7 @@ def create_guest_service_request(
                         "booking_id": payload.bookingId,
                         "notes": payload.notes,
                     },
-                )
+                ).scalar_one()
             mongo_synced = try_synchronize_mongo(schema)
         return {
             "requestId": request_id,
@@ -1161,6 +1161,7 @@ def create_guest_service_request(
             "bookingId": payload.bookingId,
             "notes": payload.notes,
             "status": "Pending",
+            "requestedAt": requested_at,
             "mongoSynced": mongo_synced,
         }
     except HTTPException:

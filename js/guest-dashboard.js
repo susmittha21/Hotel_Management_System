@@ -334,7 +334,7 @@ function setupGuestReview() {
       renderGuestReviews();
       populateGuestReviewBookings();
       document.getElementById('guestReviewForm').reset();
-      showGuestMessage('guestReviewMessage', 'Thank you. Your review has been shared with hotel management.', 'success');
+      showGuestMessage('guestReviewMessage', 'Thank you for sharing your experience.', 'success');
       notifyMongoSyncStatus(review.mongoSynced, 'Review saved in PostgreSQL.');
     } catch (error) {
       showGuestMessage('guestReviewMessage', error.message, 'error');
@@ -400,7 +400,7 @@ function setupGuestServiceRequest() {
       guestAccount.serviceRequests.unshift(request);
       renderGuestServices();
       document.getElementById('guestServiceNotes').value = '';
-      showGuestMessage('guestServiceMessage', 'Your service request has been sent to hotel staff.', 'success');
+      showGuestMessage('guestServiceMessage', 'Your service request has been submitted.', 'success');
       notifyMongoSyncStatus(request.mongoSynced, 'Service request saved in PostgreSQL.');
     } catch (error) {
       showGuestMessage('guestServiceMessage', error.message, 'error');
