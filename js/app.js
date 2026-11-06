@@ -79,6 +79,20 @@ const DATA_COLLECTIONS = {
 const pendingCollectionWrites = new Map();
 let mongoSyncNoticeShown = false;
 
+async function fetchApi(path, options) {
+  try {
+    return await fetch(`${API_BASE_URL}${path}`, options);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        `Can't reach the hotel API at ${API_BASE_URL}. Start FastAPI on port 8000, ` +
+        'check the configured API URL, and ensure CORS allows this page.'
+      );
+    }
+    throw error;
+  }
+}
+
 function notifyMongoSyncStatus(mongoSynced, message = 'Changes were saved in PostgreSQL.') {
   if (mongoSynced !== false || mongoSyncNoticeShown) return;
   mongoSyncNoticeShown = true;
@@ -88,7 +102,7 @@ function notifyMongoSyncStatus(mongoSynced, message = 'Changes were saved in Pos
 function saveCollectionToDatabase(storageKey, collection, records) {
   const previousWrite = pendingCollectionWrites.get(collection) || Promise.resolve();
   const write = previousWrite.catch(() => {}).then(async () => {
-    const response = await fetch(`${API_BASE_URL}/data/${collection}`, {
+    const response = await fetchApi(`/data/${collection}`, {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -116,7 +130,7 @@ function saveCollectionToDatabase(storageKey, collection, records) {
 }
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchApi(path, {
     ...options,
     credentials: 'include',
     headers: {

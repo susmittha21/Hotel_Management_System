@@ -56,12 +56,14 @@ The FastAPI service stores management records in PostgreSQL's relational tables 
    py -m pip install -r requirements.txt
    py -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
    ```
-3. Start PostgreSQL, then open `http://127.0.0.1:8000/api/health` to confirm it is connected. MongoDB connectivity is reported separately and is optional when using PostgreSQL. `http://127.0.0.1:8000/docs` lists the available API routes.
+3. Start PostgreSQL, then open `http://127.0.0.1:8000/` to confirm the API is running and `http://127.0.0.1:8000/api/health` to confirm the database is connected. MongoDB connectivity is reported separately and is optional when using PostgreSQL. `http://127.0.0.1:8000/docs` lists the available API routes.
 4. `GET /api/data` reads the database chosen at login. Writes, invoice creation, and payments are saved in PostgreSQL first. When MongoDB is available, the API mirrors those records; if it is offline, PostgreSQL operations still succeed and the frontend displays a sync notice. Selecting MongoDB requires it to be reachable. Its collections are refreshed from PostgreSQL, which wins if their data differs.
 
 The public home page uses `GET /api/public/availability` to list rooms that can fit the selected dates and party size. Submitting the form uses `POST /api/public/bookings` to create the guest and confirmed reservation in one PostgreSQL transaction; that reservation appears in the staff Reservations page and is mirrored to MongoDB when available. Guest booking requires the backend, PostgreSQL, and room inventory to be configured. Public API requests are restricted to the configured frontend origins; no staff login is needed for a guest to submit a booking.
 
 Run the frontend separately with `npm.cmd run dev` and open `http://localhost:3000`. PostgreSQL and MongoDB credentials remain on the backend and must never be placed in frontend JavaScript.
+
+If the login page reports that it cannot reach the hotel API, start the FastAPI command above and confirm `http://localhost:8000/` responds. When the frontend is opened at `http://localhost:3000`, keep the API on the same `localhost` hostname (`http://localhost:8000/api`); mixing `localhost` and `127.0.0.1` can prevent the browser from retaining the strict login session cookie. For a deployed frontend, set `window.HOTEL_API_BASE_URL` to the reachable API URL ending in `/api`, and include the exact frontend origin in backend `CORS_ORIGINS`. A browser network error happens before the API can report a database error, so selecting MongoDB is not itself the cause of an unreachable API.
 
 #### Staff login and permissions
 

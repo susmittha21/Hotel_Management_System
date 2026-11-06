@@ -278,6 +278,15 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+def api_root():
+    return {
+        "message": "VS Plaza Hotel Management API is running.",
+        "docs": "/docs",
+        "health": "/api/health",
+    }
+
+
 def _configured_users() -> dict[str, tuple[str, str]]:
     config = {
         "Hotel Manager": ("PMS_MANAGER_USERNAME", "PMS_MANAGER_PASSWORD"),
