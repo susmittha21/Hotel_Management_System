@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Stay | VS Plaza Guest Portal</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <link rel="stylesheet" href="../css/guest.css">
+</head>
+<body class="guest-page">
+  <header class="guest-header">
+    <a class="guest-brand" href="../index.html">VS PLAZA · Guest Portal</a>
+    <div class="guest-header-actions">
+      <span id="guestWelcome" class="guest-muted"></span>
+      <a class="btn btn-secondary" href="../index.html">Hotel Website</a>
+      <button id="guestLogoutButton" class="btn btn-secondary" type="button">Sign Out</button>
+    </div>
+  </header>
+
+  <main class="guest-container">
+    <section class="guest-card">
+      <h1>My Stay</h1>
+      <p class="guest-muted">Book rooms, request hotel services, and track your requests in one place.</p>
+    </section>
+
+    <section class="guest-card" id="booking">
+      <h2>Reserve a Room</h2>
+      <form id="guestBookingForm">
+        <div class="guest-form-grid">
+          <div class="form-group">
+            <label class="form-label" for="guestCheckIn">Check-In</label>
+            <input class="form-control" id="guestCheckIn" type="date" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="guestCheckOut">Check-Out</label>
+            <input class="form-control" id="guestCheckOut" type="date" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="guestCount">Guests</label>
+            <select class="form-control" id="guestCount" required>
+              <option value="1">1 Guest</option>
+              <option value="2" selected>2 Guests</option>
+              <option value="3">3 Guests</option>
+              <option value="4">4 Guests</option>
+              <option value="5">5 Guests</option>
+              <option value="6">6 Guests</option>
+              <option value="7">7 Guests</option>
+              <option value="8">8 Guests</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="guestAvailableRooms">Available Room</label>
+            <select class="form-control" id="guestAvailableRooms" required disabled>
+              <option value="">Check availability to choose a room</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1;">
+            <h3>Demo Payment</h3>
+            <p class="guest-muted">This is a simulated demo transaction only. No real payment is processed, and no card or bank details are requested.</p>
+            <label class="form-label" for="guestPaymentMethod">Payment option</label>
+            <select class="form-control" id="guestPaymentMethod" required disabled>
+              <option value="">Choose a demo payment option</option>
+              <option value="UPI">UPI · Demo</option>
+              <option value="Credit Card">Card · Demo</option>
+              <option value="Net Banking">Net Banking · Demo</option>
+            </select>
+            <p id="guestPaymentSummary" class="guest-muted" aria-live="polite">Check availability and select a room to see the total.</p>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1;">
+            <label class="form-label" for="guestBookingNotes">Special Requests (optional)</label>
+            <textarea class="form-control" id="guestBookingNotes" maxlength="1000" rows="2"></textarea>
+          </div>
+          <div class="guest-form-actions">
+            <button id="guestCheckAvailability" class="btn btn-secondary" type="button">Check Availability</button>
+            <button id="guestReserveButton" class="btn btn-primary" type="submit" disabled>Pay &amp; Confirm Reservation</button>
+          </div>
+        </div>
+      </form>
+      <p id="guestBookingMessage" class="guest-message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="guest-card">
+      <h2>My Reservations</h2>
+      <div class="guest-table-wrap">
+        <table class="guest-table">
+          <thead><tr><th>Reservation</th><th>Room</th><th>Dates</th><th>Guests</th><th>Status</th><th>Payment</th><th>Paid Amount</th><th>Invoice</th></tr></thead>
+          <tbody id="guestBookingsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="guest-card">
+      <h2>Share Your Experience</h2>
+      <p class="guest-muted">Reviews are available after check-out and are shared with hotel management.</p>
+      <form id="guestReviewForm">
+        <div class="guest-form-grid">
+          <div class="form-group">
+            <label class="form-label" for="guestReviewBooking">Reservation</label>
+            <select class="form-control" id="guestReviewBooking" required disabled>
+              <option value="">Select a completed reservation</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="guestReviewRating">Rating</label>
+            <select class="form-control" id="guestReviewRating" required>
+              <option value="5">5 — Excellent</option>
+              <option value="4">4 — Very good</option>
+              <option value="3">3 — Good</option>
+              <option value="2">2 — Fair</option>
+              <option value="1">1 — Poor</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1;">
+            <label class="form-label" for="guestReviewComment">Your review</label>
+            <textarea class="form-control" id="guestReviewComment" minlength="3" maxlength="2000" rows="3" required></textarea>
+          </div>
+          <div class="guest-form-actions">
+            <button id="guestReviewSubmit" class="btn btn-primary" type="submit" disabled>Submit Review</button>
+          </div>
+        </div>
+      </form>
+      <p id="guestReviewMessage" class="guest-message" role="status" aria-live="polite"></p>
+      <div class="guest-table-wrap">
+        <table class="guest-table">
+          <thead><tr><th>Reservation</th><th>Rating</th><th>Review</th></tr></thead>
+          <tbody id="guestReviewsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="guest-card">
+      <h2>Request a Hotel Service</h2>
+      <p class="guest-muted">Select a service and staff will receive your request in their dashboard.</p>
+      <form id="guestServiceForm">
+        <div class="guest-form-grid">
+          <div class="form-group">
+            <label class="form-label" for="guestService">Hotel Service</label>
+            <select class="form-control" id="guestService" required></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="guestServiceBooking">Reservation (optional)</label>
+            <select class="form-control" id="guestServiceBooking">
+              <option value="">Not linked to a reservation</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1;">
+            <label class="form-label" for="guestServiceNotes">Notes (optional)</label>
+            <textarea class="form-control" id="guestServiceNotes" maxlength="500" rows="2" placeholder="Add timing or other details"></textarea>
+          </div>
+          <div class="guest-form-actions">
+            <button id="guestServiceSubmit" class="btn btn-primary" type="submit">Send Service Request</button>
+          </div>
+        </div>
+      </form>
+      <p id="guestServiceMessage" class="guest-message" role="status" aria-live="polite"></p>
+      <div class="guest-table-wrap">
+        <table class="guest-table">
+          <thead><tr><th>Request</th><th>Service</th><th>Reservation</th><th>Notes</th><th>Status</th><th>Requested</th></tr></thead>
+          <tbody id="guestServiceRequestsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="guest-card">
+      <h2>Order Food</h2>
+      <p class="guest-muted">Use the hotel’s online ordering service.</p>
+      <a id="guestFoodOrderLink" class="btn btn-primary guest-food-link" href="#" aria-disabled="true">Online food ordering link coming soon</a>
+    </section>
+  </main>
+
+  <script src="../js/app.js"></script>
+  <script src="../js/guest-config.js"></script>
+  <script src="../js/guest-dashboard.js"></script>
+</body>
+</html>

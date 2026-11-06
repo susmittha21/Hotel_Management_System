@@ -9,6 +9,26 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection
 
 
+DEFAULT_ROOM_INVENTORY = [
+    {
+        "room_number": str(floor * 100 + number),
+        "type": "Standard" if number <= 4 else "Deluxe" if number <= 8 else "Suite",
+        "floor": floor,
+        "capacity": 2 if number <= 4 else 3 if number <= 8 else 4,
+        "price": 2500 if number <= 4 else 3500 if number <= 8 else 4500,
+        "view": "City View" if number % 2 else "Garden View",
+        "amenities": "Wi-Fi, Air Conditioning, Television",
+    }
+    for floor in range(1, 4)
+    for number in range(1, 11)
+]
+DEFAULT_HOTEL_SERVICES = [
+    {"service_code": "SV-01", "name": "Airport Pickup", "category": "Transfer", "price": 850},
+    {"service_code": "SV-02", "name": "Laundry Service", "category": "Laundry", "price": 320},
+    {"service_code": "SV-03", "name": "Spa Session", "category": "Wellness", "price": 1500},
+]
+
+
 def ensure_extension_tables(connection: Connection, schema: str) -> None:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
         raise ValueError("Invalid PostgreSQL schema identifier.")
@@ -43,6 +63,27 @@ def ensure_extension_tables(connection: Connection, schema: str) -> None:
         )
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS "{schema}".guest_account (
+            guest_id VARCHAR(20) PRIMARY KEY REFERENCES "{schema}".guest(guest_id) ON DELETE CASCADE,
+            email_normalized VARCHAR(254) NOT NULL UNIQUE,
+            password_hash VARCHAR(256) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS "{schema}".service_request (
+            request_id VARCHAR(40) PRIMARY KEY,
+            guest_id VARCHAR(20) NOT NULL REFERENCES "{schema}".guest(guest_id) ON DELETE CASCADE,
+            service_code VARCHAR(40) NOT NULL REFERENCES "{schema}".hotel_service(service_code) ON DELETE RESTRICT,
+            booking_id VARCHAR(20) REFERENCES "{schema}".booking(booking_id) ON DELETE SET NULL,
+            notes VARCHAR(500),
+            request_status VARCHAR(20) NOT NULL DEFAULT 'Pending'
+                CHECK (request_status IN ('Pending', 'In Progress', 'Completed', 'Declined')),
+            requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        f'CREATE INDEX IF NOT EXISTS service_request_guest_requested_idx ON "{schema}".service_request (guest_id, requested_at DESC)',
+        f"""
         CREATE TABLE IF NOT EXISTS "{schema}".invoice_line_item (
             line_id BIGSERIAL PRIMARY KEY,
             invoice_id VARCHAR(20) NOT NULL REFERENCES "{schema}".invoice(invoice_id) ON DELETE CASCADE,
@@ -73,22 +114,73 @@ def ensure_extension_tables(connection: Connection, schema: str) -> None:
         f'CREATE UNIQUE INDEX IF NOT EXISTS review_code_uq ON "{schema}".review (review_code)',
         f'ALTER TABLE "{schema}".payment ADD COLUMN IF NOT EXISTS invoice_id VARCHAR(20) '
         f'REFERENCES "{schema}".invoice(invoice_id) ON DELETE RESTRICT',
+        f'ALTER TABLE "{schema}".payment ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(40)',
         f'ALTER TABLE "{schema}".invoice ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC(10, 2) NOT NULL DEFAULT 0',
         f'ALTER TABLE "{schema}".invoice ADD COLUMN IF NOT EXISTS sgst_amount NUMERIC(10, 2) NOT NULL DEFAULT 0',
         f'DROP INDEX IF EXISTS "{schema}".payment_invoice_id_uq',
-        f'ALTER TABLE "{schema}".housekeeping ADD COLUMN IF NOT EXISTS task_code VARCHAR(40)',
-        f'ALTER TABLE "{schema}".housekeeping ADD COLUMN IF NOT EXISTS assigned_staff_label VARCHAR(100)',
-        f'UPDATE "{schema}".housekeeping SET task_code=\'LEGACY-HK-\' || task_id WHERE task_code IS NULL',
-        f'CREATE UNIQUE INDEX IF NOT EXISTS housekeeping_task_code_uq ON "{schema}".housekeeping (task_code)',
-        f'ALTER TABLE "{schema}".maintenance ADD COLUMN IF NOT EXISTS issue_code VARCHAR(40)',
-        f'ALTER TABLE "{schema}".maintenance ADD COLUMN IF NOT EXISTS assigned_staff_label VARCHAR(100)',
-        f'UPDATE "{schema}".maintenance SET issue_code=\'LEGACY-MI-\' || issue_id WHERE issue_code IS NULL',
-        f'CREATE UNIQUE INDEX IF NOT EXISTS maintenance_issue_code_uq ON "{schema}".maintenance (issue_code)',
     ]
     for statement in statements:
         connection.execute(text(statement))
     _ensure_check_in_out_table(connection, schema)
     _migrate_legacy_json_data(connection, schema)
+
+
+def ensure_default_rooms(connection: Connection, schema: str) -> None:
+    existing_numbers = _existing_ids(connection, schema, "room", "room_number")
+    for room in DEFAULT_ROOM_INVENTORY:
+        if len(existing_numbers) >= len(DEFAULT_ROOM_INVENTORY):
+            break
+        if room["room_number"] in existing_numbers:
+            continue
+
+        room_type_id = connection.execute(
+            text(f'SELECT room_type_id FROM "{schema}".room_type WHERE type_name=:name ORDER BY room_type_id LIMIT 1'),
+            {"name": room["type"]},
+        ).scalar_one_or_none()
+        if room_type_id is None:
+            room_type_id = connection.execute(
+                text(
+                    f'INSERT INTO "{schema}".room_type (type_name, base_price, max_occupancy) '
+                    "VALUES (:name, :price, :capacity) RETURNING room_type_id"
+                ),
+                {"name": room["type"], "price": room["price"], "capacity": room["capacity"]},
+            ).scalar_one()
+
+        connection.execute(
+            text(
+                f'INSERT INTO "{schema}".room '
+                "(room_number, room_type_id, floor_number, room_status, price, capacity, "
+                "smoking_allowed, view_type, amenities) "
+                "VALUES (:number, :type_id, :floor, 'Available', :price, :capacity, FALSE, :view, :amenities) "
+                "ON CONFLICT (room_number) DO NOTHING"
+            ),
+            {
+                "number": room["room_number"],
+                "type_id": room_type_id,
+                "floor": room["floor"],
+                "price": room["price"],
+                "capacity": room["capacity"],
+                "view": room["view"],
+                "amenities": room["amenities"],
+            },
+        )
+        existing_numbers.add(room["room_number"])
+
+
+def ensure_default_services(connection: Connection, schema: str) -> None:
+    has_services = connection.execute(
+        text(f'SELECT 1 FROM "{schema}".hotel_service LIMIT 1')
+    ).first()
+    if has_services:
+        return
+    for service in DEFAULT_HOTEL_SERVICES:
+        connection.execute(
+            text(
+                f'INSERT INTO "{schema}".hotel_service (service_code, name, category, price) '
+                "VALUES (:service_code, :name, :category, :price) ON CONFLICT (service_code) DO NOTHING"
+            ),
+            service,
+        )
 
 
 def _ensure_check_in_out_table(connection: Connection, schema: str) -> None:
@@ -157,8 +249,6 @@ def _migrate_legacy_json_data(connection: Connection, schema: str) -> None:
         "departments": ("department", "department_id"),
         "staff": ("staff", "staff_id"),
         "bookings": ("booking", "booking_id"),
-        "housekeeping": ("housekeeping", "task_code"),
-        "maintenance": ("maintenance", "issue_code"),
         "invoices": ("invoice", "invoice_id"),
         "food_menu": ("food_menu", "item_code"),
         "food_orders": ("food_order", "order_code"),
@@ -212,6 +302,14 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                    r.room_number, b.booking_date, b.check_in_date, b.check_out_date,
                    b.number_of_guests, b.booking_status, b.booking_source,
                    b.special_requests, b.total_tariff,
+                   (
+                       SELECT i.invoice_id FROM "{schema}".invoice i
+                       WHERE i.booking_id=b.booking_id LIMIT 1
+                   ) AS invoice_id,
+                   (
+                       SELECT i.total_amount FROM "{schema}".invoice i
+                       WHERE i.booking_id=b.booking_id LIMIT 1
+                   ) AS invoice_total,
                    CASE
                        WHEN EXISTS (
                            SELECT 1 FROM "{schema}".invoice i
@@ -253,47 +351,23 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
         )
     ).mappings()
 
-    housekeeping = connection.execute(
-        text(
-            f"""
-            SELECT h.task_code, h.task_id, r.room_number, h.assigned_staff_label,
-                   s.first_name || ' ' || s.last_name AS staff_name, h.task_type,
-                   h.scheduled_time, h.task_status
-            FROM "{schema}".housekeeping h
-            LEFT JOIN "{schema}".room r ON r.room_id = h.room_id
-            LEFT JOIN "{schema}".staff s ON s.staff_id = h.staff_id
-            ORDER BY h.scheduled_time DESC, h.task_id
-            """
-        )
-    ).mappings()
-
-    maintenance = connection.execute(
-        text(
-            f"""
-            SELECT m.issue_code, m.issue_id, r.room_number, m.issue_type, m.priority,
-                   m.assigned_staff_label, s.first_name || ' ' || s.last_name AS staff_name,
-                   m.issue_status
-            FROM "{schema}".maintenance m
-            LEFT JOIN "{schema}".room r ON r.room_id = m.room_id
-            LEFT JOIN "{schema}".staff s ON s.staff_id = m.staff_id
-            ORDER BY m.issue_id
-            """
-        )
-    ).mappings()
-
     invoices = connection.execute(
         text(
             f"""
             SELECT i.invoice_id, i.booking_id, g.first_name || ' ' || g.last_name AS guest_name,
                    r.room_number, i.room_charges, i.service_charges, i.tax_amount,
                    i.cgst_amount, i.sgst_amount, i.discount, i.total_amount,
-                   i.invoice_status, p.payment_method, p.payment_date
+                   i.invoice_status, p.payment_method_display AS payment_method, p.payment_date
             FROM "{schema}".invoice i
             LEFT JOIN "{schema}".booking b ON b.booking_id = i.booking_id
             LEFT JOIN "{schema}".guest g ON g.guest_id = b.guest_id
             LEFT JOIN "{schema}".room r ON r.room_id = b.room_id
             LEFT JOIN LATERAL (
-                SELECT payment_method, payment_date FROM "{schema}".payment
+                SELECT payment_method, payment_date,
+                       CASE WHEN payment_reference LIKE 'DEMO-%'
+                            THEN payment_method || ' (Demo)'
+                            ELSE payment_method END AS payment_method_display
+                FROM "{schema}".payment
                 WHERE invoice_id=i.invoice_id AND payment_status='Completed'
                 ORDER BY payment_date DESC LIMIT 1
             ) p ON TRUE
@@ -314,9 +388,20 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
     services = connection.execute(
         text(f'SELECT service_code, name, category, price FROM "{schema}".hotel_service ORDER BY service_code')
     ).mappings()
+    service_requests = connection.execute(
+        text(
+            f'SELECT sr.request_id, sr.guest_id, guest.first_name || \' \' || guest.last_name AS guest_name, '
+            f'sr.service_code, service.name AS service_name, sr.booking_id, sr.notes, '
+            f'sr.request_status, sr.requested_at '
+            f'FROM "{schema}".service_request sr '
+            f'JOIN "{schema}".guest guest ON guest.guest_id=sr.guest_id '
+            f'JOIN "{schema}".hotel_service service ON service.service_code=sr.service_code '
+            f'ORDER BY sr.requested_at DESC, sr.request_id'
+        )
+    ).mappings()
     reviews = connection.execute(
         text(
-            f'SELECT rv.review_code, guest.first_name || \' \' || guest.last_name AS guest_name, '
+            f'SELECT rv.review_code, rv.guest_id, guest.first_name || \' \' || guest.last_name AS guest_name, '
             f'rv.booking_id, rv.rating, rv.review_comments '
             f'FROM "{schema}".review rv '
             f'LEFT JOIN "{schema}".guest guest ON guest.guest_id=rv.guest_id '
@@ -398,6 +483,8 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "bookingSource": row["booking_source"],
                     "specialRequests": row["special_requests"],
                     "totalAmount": row["total_tariff"],
+                    "invoiceId": row["invoice_id"],
+                    "paidAmount": row["invoice_total"] if row["payment_status"] == "Paid" else None,
                     "paymentStatus": row["payment_status"],
                 }
             )
@@ -428,32 +515,6 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
             )
             for row in staff
         ],
-        "housekeeping": [
-            _record(
-                {
-                    "taskId": row["task_code"] or str(row["task_id"]),
-                    "roomNo": row["room_number"],
-                    "assignedStaff": row["assigned_staff_label"] or row["staff_name"],
-                    "taskType": row["task_type"],
-                    "scheduledDate": row["scheduled_time"],
-                    "status": row["task_status"],
-                }
-            )
-            for row in housekeeping
-        ],
-        "maintenance": [
-            _record(
-                {
-                    "issueId": row["issue_code"] or str(row["issue_id"]),
-                    "roomNo": row["room_number"],
-                    "issueType": row["issue_type"],
-                    "priority": row["priority"],
-                    "assignedTo": row["assigned_staff_label"] or row["staff_name"],
-                    "status": "Open" if row["issue_status"] == "Reported" else row["issue_status"],
-                }
-            )
-            for row in maintenance
-        ],
         "invoices": [
             _record(
                 {
@@ -469,7 +530,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "cgst": row["cgst_amount"],
                     "sgst": row["sgst_amount"],
                     "status": "Pending" if row["invoice_status"] == "Unpaid" else row["invoice_status"],
-                    "paymentMethod": row["payment_method"],
+                    "paymentMethod": row["payment_method_display"],
                     "paymentDate": row["payment_date"],
                     "lines": lines_by_invoice.get(row["invoice_id"], []),
                 }
@@ -507,10 +568,27 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
             )
             for row in services
         ],
+        "service_requests": [
+            _record(
+                {
+                    "requestId": row["request_id"],
+                    "guestId": row["guest_id"],
+                    "guestName": row["guest_name"],
+                    "serviceId": row["service_code"],
+                    "serviceName": row["service_name"],
+                    "bookingId": row["booking_id"],
+                    "notes": row["notes"],
+                    "status": row["request_status"],
+                    "requestedAt": row["requested_at"],
+                }
+            )
+            for row in service_requests
+        ],
         "reviews": [
             _record(
                 {
                     "reviewId": row["review_code"],
+                    "guestId": row["guest_id"],
                     "guestName": row["guest_name"],
                     "bookingId": row["booking_id"],
                     "rating": row["rating"],
@@ -532,6 +610,9 @@ def invoice_options(connection: Connection, schema: str) -> dict[str, list[dict[
             JOIN "{schema}".guest g ON g.guest_id=b.guest_id
             JOIN "{schema}".room r ON r.room_id=b.room_id
             WHERE b.booking_status <> 'Cancelled'
+              AND NOT EXISTS (
+                  SELECT 1 FROM "{schema}".invoice i WHERE i.booking_id=b.booking_id
+              )
             ORDER BY b.booking_date DESC
             """
         )
@@ -785,7 +866,9 @@ def settle_invoice(
     schema: str,
     invoice_id: str,
     payment_method: str,
-) -> None:
+    *,
+    simulated: bool = False,
+) -> str:
     invoice = connection.execute(
         text(
             f'SELECT invoice_id, booking_id, total_amount, invoice_status '
@@ -802,8 +885,8 @@ def settle_invoice(
         text(
             f"""
             INSERT INTO "{schema}".payment
-                (payment_id, invoice_id, booking_id, amount, payment_method, payment_status)
-            VALUES (:payment_id, :invoice_id, :booking_id, :amount, :method, 'Completed')
+                (payment_id, invoice_id, booking_id, amount, payment_method, payment_reference, payment_status)
+            VALUES (:payment_id, :invoice_id, :booking_id, :amount, :method, :payment_reference, 'Completed')
             ON CONFLICT (payment_id) DO NOTHING
             """
         ),
@@ -813,12 +896,14 @@ def settle_invoice(
             "booking_id": invoice["booking_id"],
             "amount": invoice["total_amount"],
             "method": payment_method,
+            "payment_reference": f"DEMO-{payment_id}" if simulated else None,
         },
     )
     connection.execute(
         text(f'UPDATE "{schema}".invoice SET invoice_status=\'Paid\' WHERE invoice_id=:invoice_id'),
         {"invoice_id": invoice_id},
     )
+    return payment_id
 
 
 def dashboard_analytics(connection: Connection, schema: str) -> dict[str, Any]:
@@ -886,8 +971,6 @@ def replace_collection(
         "bookings": _save_bookings,
         "departments": _save_departments,
         "staff": _save_staff,
-        "housekeeping": _save_housekeeping,
-        "maintenance": _save_maintenance,
         "invoices": _save_invoices,
         "food_menu": _save_food_menu,
         "food_orders": _save_food_orders,
@@ -917,7 +1000,7 @@ def public_available_rooms(
             LEFT JOIN "{schema}".room_type rt ON rt.room_type_id=r.room_type_id
             WHERE r.room_status IN ('Available', 'Reserved')
               AND r.capacity >= :guests_count
-              AND (:room_type IS NULL OR rt.type_name=:room_type)
+              AND (CAST(:room_type AS TEXT) IS NULL OR rt.type_name=:room_type)
               AND NOT EXISTS (
                   SELECT 1 FROM "{schema}".booking b
                   WHERE b.room_id=r.room_id
@@ -954,13 +1037,16 @@ def create_public_booking(
     schema: str,
     *,
     room_number: str,
-    guest_name: str,
-    phone: str,
-    email: str | None,
+    guest_name: str | None = None,
+    phone: str | None = None,
+    email: str | None = None,
     check_in: date,
     check_out: date,
     guests_count: int,
     special_requests: str | None,
+    booking_source: str = "Website",
+    check_in_immediately: bool = False,
+    guest_id: str | None = None,
 ) -> dict[str, Any]:
     room = connection.execute(
         text(
@@ -994,30 +1080,49 @@ def create_public_booking(
     if overlap:
         raise ValueError("The selected room has just been booked for those dates. Please choose another room.")
 
-    guest_id = f"G-{uuid4().hex[:16].upper()}"
+    existing_guest = None
+    if guest_id:
+        existing_guest = connection.execute(
+            text(
+                f'SELECT first_name, last_name FROM "{schema}".guest '
+                "WHERE guest_id=:guest_id"
+            ),
+            {"guest_id": guest_id},
+        ).mappings().one_or_none()
+        if existing_guest is None:
+            raise ValueError("The guest account no longer exists.")
+        first_name, last_name = existing_guest["first_name"], existing_guest["last_name"]
+    else:
+        if not guest_name or not phone:
+            raise ValueError("Guest name and phone are required to create a guest record.")
+        guest_id = f"G-{uuid4().hex[:16].upper()}"
+        first_name, _, last_name = guest_name.strip().partition(" ")
+        last_name = last_name.strip() or "Guest"
+
     booking_id = f"B-{uuid4().hex[:16].upper()}"
-    first_name, _, last_name = guest_name.strip().partition(" ")
-    last_name = last_name.strip() or "Guest"
+    booking_status = "Checked-In" if check_in_immediately else "Confirmed"
+    room_status = "Occupied" if check_in_immediately else "Reserved"
     nights = (check_out - check_in).days
     total_amount = Decimal(str(room["price"])) * nights
-    connection.execute(
-        text(
-            f"""
-            INSERT INTO "{schema}".guest
-                (guest_id, first_name, last_name, phone_number, email, country, id_type, id_number)
-            VALUES
-                (:guest_id, :first_name, :last_name, :phone, :email, 'India', 'Not Provided', :id_number)
-            """
-        ),
-        {
-            "guest_id": guest_id,
-            "first_name": first_name[:50],
-            "last_name": last_name[:50],
-            "phone": phone,
-            "email": email,
-            "id_number": f"ONLINE-{guest_id}",
-        },
-    )
+    if existing_guest is None:
+        connection.execute(
+            text(
+                f"""
+                INSERT INTO "{schema}".guest
+                    (guest_id, first_name, last_name, phone_number, email, country, id_type, id_number)
+                VALUES
+                    (:guest_id, :first_name, :last_name, :phone, :email, 'India', 'Not Provided', :id_number)
+                """
+            ),
+            {
+                "guest_id": guest_id,
+                "first_name": first_name[:50],
+                "last_name": last_name[:50],
+                "phone": phone,
+                "email": email,
+                "id_number": f"ONLINE-{guest_id}",
+            },
+        )
     connection.execute(
         text(
             f"""
@@ -1026,7 +1131,7 @@ def create_public_booking(
                  number_of_guests, booking_status, booking_source, special_requests, total_tariff)
             VALUES
                 (:booking_id, :guest_id, :room_id, CURRENT_TIMESTAMP, :check_in, :check_out,
-                 :guests_count, 'Confirmed', 'Website', :special_requests, :total_amount)
+                 :guests_count, :booking_status, :booking_source, :special_requests, :total_amount)
             """
         ),
         {
@@ -1036,15 +1141,19 @@ def create_public_booking(
             "check_in": check_in,
             "check_out": check_out,
             "guests_count": guests_count,
+            "booking_status": booking_status,
+            "booking_source": booking_source,
             "special_requests": special_requests,
             "total_amount": total_amount,
         },
     )
-    if room["room_status"] == "Available":
+    if room["room_status"] == "Available" or check_in_immediately:
         connection.execute(
-            text(f'UPDATE "{schema}".room SET room_status=\'Reserved\' WHERE room_id=:room_id'),
-            {"room_id": room["room_id"]},
+            text(f'UPDATE "{schema}".room SET room_status=:status WHERE room_id=:room_id'),
+            {"status": room_status, "room_id": room["room_id"]},
         )
+    if check_in_immediately:
+        _update_stay(connection, schema, booking_id, booking_status)
     return {
         "bookingId": booking_id,
         "guestId": guest_id,
@@ -1055,19 +1164,47 @@ def create_public_booking(
         "checkOut": check_out.isoformat(),
         "guestsCount": guests_count,
         "totalAmount": float(total_amount),
-        "status": "Confirmed",
+        "status": booking_status,
         "paymentStatus": "Pending",
-        "bookingSource": "Website",
+        "bookingSource": booking_source,
         "specialRequests": special_requests or "",
     }
 
 
 def _save_rooms(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
-    existing = _existing_ids(connection, schema, "room", "room_number")
-    retained = set()
+    existing_rows = connection.execute(
+        text(
+            f'SELECT r.room_number, rt.type_name, r.floor_number, r.capacity, r.price, '
+            f'r.smoking_allowed, r.view_type, r.amenities, r.room_status '
+            f'FROM "{schema}".room r LEFT JOIN "{schema}".room_type rt ON rt.room_type_id=r.room_type_id'
+        )
+    ).mappings()
+    existing = {str(row["room_number"]): row for row in existing_rows}
+    room_numbers = {str(record["roomNo"]) for record in records}
+    if existing and room_numbers != set(existing):
+        raise ValueError("The room inventory is fixed and cannot be added to or deleted.")
+
     for record in records:
         number = str(record["roomNo"])
-        retained.add(number)
+        current = existing.get(number)
+        if not current:
+            continue
+        unchanged = (
+            str(record.get("type") or "Standard") == (current["type_name"] or "Standard")
+            and int(record.get("floor") or 1) == current["floor_number"]
+            and int(record.get("capacity") or 1) == current["capacity"]
+            and Decimal(str(record.get("price") or 0)) == current["price"]
+            and bool(record.get("smokingAllowed", False)) == current["smoking_allowed"]
+            and record.get("viewType") == current["view_type"]
+            and record.get("amenities") == current["amenities"]
+        )
+        if not unchanged:
+            raise ValueError("Room details are fixed and can only be changed by the hotel database administrator.")
+        if record.get("status") not in {"Available", "Occupied", "Reserved"} and record.get("status") != current["room_status"]:
+            raise ValueError(f"Room {number} has an invalid availability status.")
+
+    for record in records:
+        number = str(record["roomNo"])
         room_type = str(record.get("type") or "Standard")
         room_type_id = connection.execute(
             text(f'SELECT room_type_id FROM "{schema}".room_type WHERE type_name = :name ORDER BY room_type_id LIMIT 1'),
@@ -1110,7 +1247,6 @@ def _save_rooms(connection: Connection, schema: str, records: list[dict[str, Any
                 ),
                 values,
             )
-    _delete_missing(connection, schema, "room", "room_number", retained)
 
 
 def _save_guests(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
@@ -1158,25 +1294,52 @@ def _save_guests(connection: Connection, schema: str, records: list[dict[str, An
 
 def _save_bookings(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
     existing = _existing_ids(connection, schema, "booking", "booking_id")
-    retained = set()
     for record in records:
         booking_id = str(record["bookingId"])
-        retained.add(booking_id)
-        room_id = connection.execute(
-            text(f'SELECT room_id FROM "{schema}".room WHERE room_number=:number'),
+        room = connection.execute(
+            text(
+                f'SELECT room_id, capacity FROM "{schema}".room '
+                "WHERE room_number=:number FOR UPDATE"
+            ),
             {"number": record.get("roomNo")},
-        ).scalar_one_or_none()
-        if room_id is None:
+        ).mappings().one_or_none()
+        if room is None:
             raise ValueError(f"Room {record.get('roomNo')} does not exist.")
+        check_in = record.get("checkIn")
+        check_out = record.get("checkOut")
+        guests_count = int(record.get("guestsCount") or 1)
+        status = record.get("status") or "Confirmed"
+        if not check_in or not check_out or check_out <= check_in:
+            raise ValueError(f"Booking {booking_id} must have valid check-in and check-out dates.")
+        if guests_count < 1 or guests_count > room["capacity"]:
+            raise ValueError(f"Room {record.get('roomNo')} cannot accommodate {guests_count} guests.")
+        if status != "Cancelled":
+            overlap = connection.execute(
+                text(
+                    f'SELECT 1 FROM "{schema}".booking '
+                    "WHERE room_id=:room_id AND booking_id<>:booking_id "
+                    "AND booking_status<>'Cancelled' "
+                    "AND check_in_date<CAST(:check_out AS DATE) "
+                    "AND check_out_date>CAST(:check_in AS DATE) LIMIT 1"
+                ),
+                {
+                    "room_id": room["room_id"],
+                    "booking_id": booking_id,
+                    "check_in": check_in,
+                    "check_out": check_out,
+                },
+            ).first()
+            if overlap:
+                raise ValueError(f"Room {record.get('roomNo')} is already reserved for those dates.")
         values = {
             "id": booking_id,
             "guest_id": str(record.get("guestId") or ""),
-            "room_id": room_id,
+            "room_id": room["room_id"],
             "booking_date": record.get("bookingDate") or date.today().isoformat(),
-            "check_in": record.get("checkIn"),
-            "check_out": record.get("checkOut"),
-            "guests": int(record.get("guestsCount") or 1),
-            "status": record.get("status") or "Confirmed",
+            "check_in": check_in,
+            "check_out": check_out,
+            "guests": guests_count,
+            "status": status,
             "source": record.get("bookingSource") or "Walk-In",
             "requests": record.get("specialRequests"),
             "tariff": record.get("totalAmount") or 0,
@@ -1205,9 +1368,6 @@ def _save_bookings(connection: Connection, schema: str, records: list[dict[str, 
             )
         if values["status"] in ("Checked-In", "Checked-Out"):
             _update_stay(connection, schema, booking_id, values["status"])
-    _delete_missing(connection, schema, "booking", "booking_id", retained)
-
-
 def _update_stay(connection: Connection, schema: str, booking_id: str, status: str) -> None:
     table = _check_in_out_table(connection, schema)
     stay_id = connection.execute(
@@ -1320,82 +1480,6 @@ def _save_staff(connection: Connection, schema: str, records: list[dict[str, Any
     _delete_missing(connection, schema, "staff", "staff_id", retained)
 
 
-def _save_housekeeping(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
-    existing = _existing_ids(connection, schema, "housekeeping", "task_code")
-    retained = set()
-    for record in records:
-        code = str(record["taskId"])
-        retained.add(code)
-        room_id, staff_id = _room_and_staff(connection, schema, record.get("roomNo"), record.get("assignedStaff"))
-        values = {
-            "code": code,
-            "room_id": room_id,
-            "staff_id": staff_id,
-            "staff_label": record.get("assignedStaff"),
-            "type": record.get("taskType") or "Daily Cleaning",
-            "status": record.get("status") or "Pending",
-            "scheduled": record.get("scheduledDate"),
-        }
-        if code in existing:
-            connection.execute(
-                text(
-                    f'UPDATE "{schema}".housekeeping SET room_id=:room_id, staff_id=:staff_id, '
-                    "assigned_staff_label=:staff_label, task_type=:type, task_status=:status, "
-                    "scheduled_time=COALESCE(CAST(:scheduled AS TIMESTAMP), scheduled_time) WHERE task_code=:code"
-                ),
-                values,
-            )
-        else:
-            connection.execute(
-                text(
-                    f'INSERT INTO "{schema}".housekeeping '
-                    "(task_code, room_id, staff_id, assigned_staff_label, task_type, task_status, scheduled_time) "
-                    "VALUES (:code, :room_id, :staff_id, :staff_label, :type, :status, "
-                    "COALESCE(CAST(:scheduled AS TIMESTAMP), CURRENT_TIMESTAMP))"
-                ),
-                values,
-            )
-    _delete_missing(connection, schema, "housekeeping", "task_code", retained)
-
-
-def _save_maintenance(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
-    existing = _existing_ids(connection, schema, "maintenance", "issue_code")
-    retained = set()
-    for record in records:
-        code = str(record["issueId"])
-        retained.add(code)
-        room_id, staff_id = _room_and_staff(connection, schema, record.get("roomNo"), record.get("assignedTo"))
-        status = record.get("status") or "Open"
-        values = {
-            "code": code,
-            "room_id": room_id,
-            "staff_id": staff_id,
-            "staff_label": record.get("assignedTo"),
-            "type": record.get("issueType") or "Other",
-            "priority": record.get("priority") or "Medium",
-            "status": "Reported" if status == "Open" else status,
-        }
-        if code in existing:
-            connection.execute(
-                text(
-                    f'UPDATE "{schema}".maintenance SET room_id=:room_id, staff_id=:staff_id, '
-                    "assigned_staff_label=:staff_label, issue_type=:type, priority=:priority, "
-                    "issue_status=:status WHERE issue_code=:code"
-                ),
-                values,
-            )
-        else:
-            connection.execute(
-                text(
-                    f'INSERT INTO "{schema}".maintenance '
-                    "(issue_code, room_id, staff_id, assigned_staff_label, issue_type, priority, issue_status) "
-                    "VALUES (:code, :room_id, :staff_id, :staff_label, :type, :priority, :status)"
-                ),
-                values,
-            )
-    _delete_missing(connection, schema, "maintenance", "issue_code", retained)
-
-
 def _save_invoices(connection: Connection, schema: str, records: list[dict[str, Any]]) -> None:
     existing = _existing_ids(connection, schema, "invoice", "invoice_id")
     retained = set()
@@ -1433,7 +1517,9 @@ def _save_invoices(connection: Connection, schema: str, records: list[dict[str, 
                 values,
             )
         if database_status == "Paid":
-            method = record.get("paymentMethod")
+            displayed_method = record.get("paymentMethod")
+            simulated = isinstance(displayed_method, str) and displayed_method.endswith(" (Demo)")
+            method = displayed_method.removesuffix(" (Demo)") if simulated else displayed_method
             valid_methods = {"Cash", "Credit Card", "Debit Card", "UPI", "Net Banking"}
             if method not in valid_methods:
                 raise ValueError(f"A valid payment method is required to settle invoice {invoice_id}.")
@@ -1444,15 +1530,17 @@ def _save_invoices(connection: Connection, schema: str, records: list[dict[str, 
                 "booking_id": values["booking_id"],
                 "amount": values["total"],
                 "method": method,
+                "payment_reference": f"DEMO-{payment_id}" if simulated else None,
             }
             connection.execute(
                 text(
                     f'INSERT INTO "{schema}".payment '
-                    "(payment_id, invoice_id, booking_id, amount, payment_method, payment_status) "
-                    "VALUES (:payment_id, :invoice_id, :booking_id, :amount, :method, 'Completed') "
+                    "(payment_id, invoice_id, booking_id, amount, payment_method, payment_reference, payment_status) "
+                    "VALUES (:payment_id, :invoice_id, :booking_id, :amount, :method, :payment_reference, 'Completed') "
                     "ON CONFLICT (payment_id) DO UPDATE SET invoice_id=EXCLUDED.invoice_id, "
                     "booking_id=EXCLUDED.booking_id, "
                     "amount=EXCLUDED.amount, payment_method=EXCLUDED.payment_method, "
+                    "payment_reference=EXCLUDED.payment_reference, "
                     "payment_status='Completed'"
                 ),
                 payment,
@@ -1602,29 +1690,6 @@ def _save_simple_table(
                 values,
             )
     _delete_missing(connection, schema, table, id_column, retained)
-
-
-def _room_and_staff(
-    connection: Connection, schema: str, room_number: Any, staff_label: Any
-) -> tuple[Any, Any]:
-    room_id = None
-    if room_number:
-        room_id = connection.execute(
-            text(f'SELECT room_id FROM "{schema}".room WHERE room_number=:number'),
-            {"number": room_number},
-        ).scalar_one_or_none()
-        if room_id is None:
-            raise ValueError(f"Room {room_number} does not exist.")
-    staff_id = None
-    if staff_label:
-        staff_id = connection.execute(
-            text(
-                f'SELECT staff_id FROM "{schema}".staff WHERE staff_id=:value '
-                "OR first_name || ' ' || last_name=:value ORDER BY staff_id LIMIT 1"
-            ),
-            {"value": staff_label},
-        ).scalar_one_or_none()
-    return room_id, staff_id
 
 
 def _existing_ids(connection: Connection, schema: str, table: str, column: str) -> set[Any]:

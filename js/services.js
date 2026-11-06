@@ -1,19 +1,28 @@
 let editingServiceId = null;
+let canManageServices = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     await HotelStore.initialize();
+    const user = await apiRequest('/auth/me');
+    canManageServices = user.role === 'Hotel Manager';
   } catch (error) {
     console.error('Unable to initialize services from PostgreSQL.', error);
     showToast(`Could not load hotel data from the database: ${error.message}`, 'error');
     return;
   }
   renderServicesTable();
+  renderServiceRequests();
   setupServiceForm();
-  bindActionMenu(document.getElementById('servicesTableBody'), (action, serviceId) => {
-    if (action === 'edit') editService(serviceId);
-    if (action === 'delete') removeService(serviceId);
-  });
+  document.getElementById('addServiceButton').hidden = !canManageServices;
+  document.getElementById('newServiceModal').hidden = !canManageServices;
+  if (canManageServices) {
+    bindActionMenu(document.getElementById('servicesTableBody'), (action, serviceId) => {
+      if (action === 'edit') editService(serviceId);
+      if (action === 'delete') removeService(serviceId);
+    });
+  }
+  document.getElementById('serviceRequestsTableBody').addEventListener('change', updateServiceRequestStatus);
 });
 
 function renderServicesTable() {
@@ -28,22 +37,66 @@ function renderServicesTable() {
 
   tableBody.innerHTML = services.map(service => `
     <tr>
-      <td>${service.serviceId}</td>
-      <td>${service.name}</td>
-      <td>${service.category}</td>
+      <td>${escapeHtml(service.serviceId)}</td>
+      <td>${escapeHtml(service.name)}</td>
+      <td>${escapeHtml(service.category)}</td>
       <td>₹${Number(service.price).toLocaleString('en-IN')}</td>
-      <td>${renderActionMenu(service.serviceId, [
+      <td>${canManageServices ? renderActionMenu(service.serviceId, [
         { action: 'edit', label: 'Edit service' },
         {
           action: 'delete',
           label: 'Delete service',
           disabled: HotelStore.getInvoices().some(invoice =>
             invoice.lines?.some(line => line.referenceCode === service.serviceId)
-          )
+          ) || HotelStore.getServiceRequests().some(request => request.serviceId === service.serviceId)
         }
-      ])}</td>
+      ]) : '—'}</td>
     </tr>
   `).join('');
+}
+
+function renderServiceRequests() {
+  const tableBody = document.getElementById('serviceRequestsTableBody');
+  if (!tableBody) return;
+  const requests = HotelStore.getServiceRequests();
+  if (!requests.length) {
+    tableBody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 32px; color: var(--text-muted);">No guest service requests.</td></tr>';
+    return;
+  }
+  const statuses = ['Pending', 'In Progress', 'Completed', 'Declined'];
+  tableBody.innerHTML = requests.map(request => `
+    <tr>
+      <td>${escapeHtml(request.requestId)}</td>
+      <td>${escapeHtml(request.guestName)}</td>
+      <td>${escapeHtml(request.serviceName)}</td>
+      <td>${escapeHtml(request.bookingId || '—')}</td>
+      <td>${escapeHtml(request.notes || '—')}</td>
+      <td>${escapeHtml(request.requestedAt || '')}</td>
+      <td>
+        <select class="form-control service-request-status" data-request-id="${encodeURIComponent(request.requestId)}">
+          ${statuses.map(status => `<option${status === request.status ? ' selected' : ''}>${status}</option>`).join('')}
+        </select>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function updateServiceRequestStatus(event) {
+  const select = event.target.closest('select[data-request-id]');
+  if (!select) return;
+  const requestId = decodeURIComponent(select.dataset.requestId);
+  const request = HotelStore.getServiceRequests().find(item => item.requestId === requestId);
+  if (!request || !['Pending', 'In Progress', 'Completed', 'Declined'].includes(select.value)) return;
+  const nextStatus = select.value;
+  select.disabled = true;
+  if (await HotelStore.updateServiceRequest(requestId, nextStatus) === false) {
+    select.value = request.status;
+  } else {
+    request.status = nextStatus;
+    showToast(`Service request ${requestId} updated.`, 'success');
+  }
+  select.disabled = false;
+  renderServiceRequests();
 }
 
 function setupServiceForm() {
@@ -89,6 +142,7 @@ function editService(serviceId) {
 }
 
 function startNewService() {
+  if (!canManageServices) return;
   editingServiceId = null;
   document.getElementById('newServiceForm').reset();
   document.getElementById('serviceModalTitle').textContent = 'Add Hotel Service';
@@ -97,6 +151,10 @@ function startNewService() {
 }
 
 async function removeService(serviceId) {
+  if (HotelStore.getServiceRequests().some(request => request.serviceId === serviceId)) {
+    showToast('This service has guest requests and cannot be deleted.', 'error');
+    return;
+  }
   if (HotelStore.getInvoices().some(invoice => invoice.lines?.some(line => line.referenceCode === serviceId))) {
     showToast('This service is linked to an invoice and cannot be deleted.', 'error');
     return;

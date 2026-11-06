@@ -1,0 +1,151 @@
+.guest-page {
+  min-height: 100vh;
+  background: #f7fafc;
+  color: #1a202c;
+}
+
+.guest-header {
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  padding: 14px max(20px, calc((100% - 1120px) / 2));
+}
+
+.guest-brand {
+  color: #2c5282;
+  font-size: 1.15rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.guest-header-actions,
+.guest-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.guest-container {
+  margin: 32px auto;
+  max-width: 1120px;
+  padding: 0 20px 40px;
+}
+
+.guest-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(26, 54, 93, 0.06);
+  margin-bottom: 20px;
+  padding: 22px;
+}
+
+.guest-card h1,
+.guest-card h2,
+.guest-card h3 {
+  margin: 0 0 8px;
+}
+
+.guest-muted {
+  color: #718096;
+}
+
+.guest-form-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  margin-top: 16px;
+}
+
+.guest-form-grid .form-group {
+  margin-bottom: 0;
+}
+
+.guest-form-actions {
+  align-items: end;
+  display: flex;
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+
+.guest-message {
+  min-height: 22px;
+  margin: 12px 0 0;
+}
+
+.guest-message.error {
+  color: #b91c1c;
+}
+
+.guest-message.success {
+  color: #15803d;
+}
+
+.guest-table-wrap {
+  overflow-x: auto;
+}
+
+.guest-table {
+  border-collapse: collapse;
+  min-width: 620px;
+  width: 100%;
+}
+
+.guest-table th,
+.guest-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 11px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.guest-table th {
+  color: #4a5568;
+  font-size: 0.82rem;
+}
+
+.guest-empty {
+  color: #718096;
+  padding: 16px 0;
+}
+
+.guest-account-card {
+  margin: 8vh auto;
+  max-width: 480px;
+}
+
+.guest-auth-toggle {
+  display: flex;
+  gap: 8px;
+  margin: 18px 0;
+}
+
+.guest-auth-toggle button {
+  flex: 1;
+}
+
+.guest-food-link[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+@media (max-width: 600px) {
+  .guest-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .guest-container {
+    margin-top: 18px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .guest-card {
+    padding: 16px;
+  }
+}

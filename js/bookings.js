@@ -16,6 +16,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupBookingForm();
   setupDateCalculations();
   populateAvailableRoomsDropdown();
+  const requestedRoom = new URLSearchParams(window.location.search).get('roomNo');
+  if (requestedRoom && HotelStore.getRooms().some(room => room.roomNo === requestedRoom && room.status === 'Available')) {
+    startNewBooking(requestedRoom);
+  }
   bindActionMenu(document.getElementById('bookingsTableBody'), (action, bookingId) => {
     if (action === 'edit') editBooking(bookingId);
     if (action === 'delete') deleteBooking(bookingId);
@@ -69,7 +73,7 @@ function renderBookingsTable(searchQuery = '') {
     let statusClass = 'badge-reserved';
     if (b.status === 'Checked-In') statusClass = 'badge-occupied';
     else if (b.status === 'Checked-Out') statusClass = 'badge-available';
-    else if (b.status === 'Cancelled') statusClass = 'badge-maintenance';
+    else if (b.status === 'Cancelled') statusClass = 'badge-cancelled';
     const linkedRecord = invoices.some(invoice => invoice.bookingId === b.bookingId) ||
       reviews.some(review => review.bookingId === b.bookingId);
     const actions = [{
@@ -115,7 +119,10 @@ function populateAvailableRoomsDropdown(selectedRoomNo = '') {
   if (!select) return;
 
   const rooms = HotelStore.getRooms();
-  const availableRooms = rooms.filter(r => r.status === 'Available' || r.roomNo === selectedRoomNo);
+  const guestsCount = Number(document.getElementById('bookingGuestCount')?.value || 1);
+  const availableRooms = rooms.filter(r =>
+    Number(r.capacity) >= guestsCount && (r.status === 'Available' || r.roomNo === selectedRoomNo)
+  );
 
   select.innerHTML = `<option value="">-- Select Available Room --</option>` +
     availableRooms.map(r => `
@@ -130,6 +137,7 @@ function setupDateCalculations() {
   const checkIn = document.getElementById('bookingCheckIn');
   const checkOut = document.getElementById('bookingCheckOut');
   const roomSelect = document.getElementById('bookingRoomSelect');
+  const guestCount = document.getElementById('bookingGuestCount');
   const calcField = document.getElementById('bookingEstimatedTotal');
 
   const recalculate = () => {
@@ -152,6 +160,13 @@ function setupDateCalculations() {
   if (checkIn) checkIn.addEventListener('change', recalculate);
   if (checkOut) checkOut.addEventListener('change', recalculate);
   if (roomSelect) roomSelect.addEventListener('change', recalculate);
+  if (guestCount) {
+    guestCount.addEventListener('change', () => {
+      const selectedRoomNo = roomSelect ? roomSelect.value : '';
+      populateAvailableRoomsDropdown(selectedRoomNo);
+      recalculate();
+    });
+  }
 }
 
 function setupBookingForm() {
@@ -215,6 +230,65 @@ function setupBookingForm() {
       return;
     }
 
+    const bookingSource = document.getElementById('bookingSource')
+      ? document.getElementById('bookingSource').value
+      : 'Walk-In';
+    const specialRequests = document.getElementById('bookingSpecialRequests')
+      ? document.getElementById('bookingSpecialRequests').value.trim()
+      : '';
+
+    if (!existingBooking) {
+      let createdBooking;
+      try {
+        createdBooking = await apiRequest('/bookings', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomNo,
+            guestName,
+            phone: guestPhone,
+            checkIn,
+            checkOut,
+            guestsCount,
+            specialRequests,
+            bookingSource,
+            checkInImmediately: immediateCheckIn
+          })
+        });
+      } catch (error) {
+        console.error('Unable to create the room reservation.', error);
+        showToast(`Reservation failed: ${error.message}`, 'error');
+        return;
+      }
+
+      notifyMongoSyncStatus(createdBooking.mongoSynced, 'Reservation saved in PostgreSQL.');
+      bookings.unshift(createdBooking);
+      localStorage.setItem(STORAGE_KEYS.BOOKINGS, JSON.stringify(bookings));
+      const [firstName, ...lastNameParts] = guestName.split(/\s+/);
+      guests.unshift({
+        guestId: createdBooking.guestId,
+        firstName,
+        lastName: lastNameParts.join(' ') || 'Guest',
+        phone: guestPhone,
+        city: 'Walk-in',
+        status: immediateCheckIn ? 'In-House' : 'Reserved'
+      });
+      localStorage.setItem(STORAGE_KEYS.GUESTS, JSON.stringify(guests));
+      const room = rooms.find(item => item.roomNo === roomNo);
+      if (room) {
+        room.status = immediateCheckIn ? 'Occupied' : 'Reserved';
+        if (immediateCheckIn) room.currentGuest = guestName;
+        else delete room.currentGuest;
+        localStorage.setItem(STORAGE_KEYS.ROOMS, JSON.stringify(rooms));
+      }
+
+      showToast(`Reservation #${createdBooking.bookingId} created for ${guestName}!`, 'success');
+      form.reset();
+      closeModal('newBookingModal');
+      renderBookingsTable();
+      populateAvailableRoomsDropdown();
+      return;
+    }
+
     // Auto-register guest if not existing
     let guest = guests.find(g => existingBooking ? g.guestId === existingBooking.guestId :
       g.firstName.toLowerCase() + ' ' + g.lastName.toLowerCase() === guestName.toLowerCase());
@@ -231,9 +305,6 @@ function setupBookingForm() {
       guests.push(guest);
     }
 
-    const bookingSource = document.getElementById('bookingSource') ? document.getElementById('bookingSource').value : 'Walk-In';
-    const specialRequests = document.getElementById('bookingSpecialRequests') ? document.getElementById('bookingSpecialRequests').value.trim() : '';
-
     if (existingBooking) {
       const previousRoomNo = existingBooking.roomNo;
       existingBooking.guestName = guestName;
@@ -249,7 +320,7 @@ function setupBookingForm() {
       guest.lastName = guestName.split(' ').slice(1).join(' ') || 'Guest';
       guest.phone = guestPhone;
       if (await HotelStore.saveGuests(guests) === false) return;
-      if (await HotelStore.saveBookings(bookings) === false) return;
+      if (await HotelStore.updateBooking(existingBooking) === false) return;
       if (previousRoomNo !== roomNo) {
         const oldRoom = rooms.find(room => room.roomNo === previousRoomNo);
         const otherReservations = bookings.some(booking =>
@@ -258,12 +329,11 @@ function setupBookingForm() {
           booking.status !== 'Cancelled'
         );
         if (oldRoom && oldRoom.status === 'Reserved' && !otherReservations) {
-          oldRoom.status = 'Available';
-          delete oldRoom.currentGuest;
+          if (await HotelStore.updateRoomStatus(oldRoom.roomNo, 'Available') === false) return;
         }
         const nextRoom = rooms.find(room => room.roomNo === roomNo);
-        if (nextRoom && nextRoom.status === 'Available') nextRoom.status = 'Reserved';
-        if (await HotelStore.saveRooms(rooms) === false) return;
+        if (nextRoom && nextRoom.status === 'Available' &&
+            await HotelStore.updateRoomStatus(nextRoom.roomNo, 'Reserved') === false) return;
       }
       showToast(`Reservation #${existingBooking.bookingId} updated.`, 'success');
       editingBookingId = null;
@@ -273,42 +343,6 @@ function setupBookingForm() {
       populateAvailableRoomsDropdown();
       return;
     }
-
-    if (await HotelStore.saveGuests(guests) === false) return;
-    const bookingId = `B-${crypto.randomUUID().slice(0, 16).toUpperCase()}`;
-    const newBooking = {
-      bookingId,
-      guestName,
-      guestId: guest.guestId,
-      roomNo,
-      bookingDate: formatDate(new Date()),
-      checkIn,
-      checkOut,
-      guestsCount,
-      totalAmount,
-      status: immediateCheckIn ? 'Checked-In' : 'Confirmed',
-      paymentStatus: 'Pending',
-      bookingSource,
-      specialRequests
-    };
-
-    bookings.unshift(newBooking);
-    if (await HotelStore.saveBookings(bookings) === false) return;
-
-    // Update Room state
-    const room = rooms.find(r => r.roomNo === roomNo);
-    if (room) {
-      room.status = immediateCheckIn ? 'Occupied' : 'Reserved';
-      room.currentGuest = guestName;
-      if (await HotelStore.saveRooms(rooms) === false) return;
-    }
-
-    showToast(`Reservation #${bookingId} created for ${guestName}!`, 'success');
-    form.reset();
-    closeModal('newBookingModal');
-    editingBookingId = null;
-    renderBookingsTable();
-    populateAvailableRoomsDropdown();
   });
 }
 
@@ -331,7 +365,7 @@ function editBooking(bookingId) {
   openModal('newBookingModal');
 }
 
-function startNewBooking() {
+function startNewBooking(selectedRoomNo = '') {
   editingBookingId = null;
   const form = document.getElementById('newBookingForm');
   form.reset();
@@ -343,7 +377,7 @@ function startNewBooking() {
   document.getElementById('bookingCheckOut').value = formatDate(tomorrow);
   document.getElementById('newBookingTitle').textContent = 'New Guest Reservation / Walk-In Check-In';
   document.getElementById('bookingSubmitButton').textContent = 'Confirm Reservation';
-  populateAvailableRoomsDropdown();
+  populateAvailableRoomsDropdown(selectedRoomNo);
   openModal('newBookingModal');
 }
 
@@ -357,15 +391,24 @@ async function deleteBooking(bookingId) {
     return;
   }
   if (!confirm(`Delete reservation ${bookingId}?`)) return;
-  const bookings = HotelStore.getBookings().filter(item => item.bookingId !== bookingId);
-  if (await HotelStore.saveBookings(bookings) === false) return;
-  const rooms = HotelStore.getRooms();
-  const room = rooms.find(item => item.roomNo === booking.roomNo);
-  if (room && room.status === 'Reserved' && !bookings.some(item => item.roomNo === booking.roomNo && item.status !== 'Cancelled')) {
-    room.status = 'Available';
-    delete room.currentGuest;
-    if (await HotelStore.saveRooms(rooms) === false) return;
+  let result;
+  try {
+    result = await apiRequest(`/bookings/${encodeURIComponent(bookingId)}`, { method: 'DELETE' });
+  } catch (error) {
+    console.error(`Unable to delete reservation ${bookingId}.`, error);
+    showToast(`Could not delete reservation: ${error.message}`, 'error');
+    return;
   }
+  const bookings = HotelStore.getBookings().filter(item => item.bookingId !== bookingId);
+  localStorage.setItem(STORAGE_KEYS.BOOKINGS, JSON.stringify(bookings));
+  const rooms = HotelStore.getRooms();
+  const room = rooms.find(item => item.roomNo === result.roomNo);
+  if (room) {
+    room.status = result.roomStatus;
+    if (room.status !== 'Occupied') delete room.currentGuest;
+    localStorage.setItem(STORAGE_KEYS.ROOMS, JSON.stringify(rooms));
+  }
+  notifyMongoSyncStatus(result.mongoSynced, 'Reservation deleted in PostgreSQL.');
   renderBookingsTable();
   populateAvailableRoomsDropdown();
   showToast(`Reservation ${bookingId} deleted.`, 'info');
@@ -379,13 +422,11 @@ async function performCheckIn(bookingId) {
   if (!b) return;
 
   b.status = 'Checked-In';
-  if (await HotelStore.saveBookings(bookings) === false) return;
+  if (await HotelStore.updateBooking(b) === false) return;
 
   const room = rooms.find(r => r.roomNo === b.roomNo);
   if (room) {
-    room.status = 'Occupied';
-    room.currentGuest = b.guestName;
-    if (await HotelStore.saveRooms(rooms) === false) return;
+    if (await HotelStore.updateRoomStatus(room.roomNo, 'Occupied', b.guestName) === false) return;
   }
 
   showToast(`Guest ${b.guestName} is now Checked In to Room ${b.roomNo}.`, 'success');
@@ -400,13 +441,11 @@ async function performCheckOut(bookingId) {
   if (!b) return;
 
   b.status = 'Checked-Out';
-  if (await HotelStore.saveBookings(bookings) === false) return;
+  if (await HotelStore.updateBooking(b) === false) return;
 
   const room = rooms.find(r => r.roomNo === b.roomNo);
   if (room) {
-    room.status = 'Cleaning';
-    delete room.currentGuest;
-    if (await HotelStore.saveRooms(rooms) === false) return;
+    if (await HotelStore.updateRoomStatus(room.roomNo, 'Available') === false) return;
   }
 
   showToast(`Folio finalized. Guest ${b.guestName} checked out successfully.`, 'info');
@@ -423,7 +462,7 @@ async function cancelBooking(bookingId) {
   if (!b) return;
 
   b.status = 'Cancelled';
-  if (await HotelStore.saveBookings(bookings) === false) return;
+  if (await HotelStore.updateBooking(b) === false) return;
 
   const room = rooms.find(r => r.roomNo === b.roomNo);
   const otherReservations = bookings.some(booking =>
@@ -432,9 +471,7 @@ async function cancelBooking(bookingId) {
     booking.status !== 'Cancelled'
   );
   if (room && room.status === 'Reserved' && !otherReservations) {
-    room.status = 'Available';
-    delete room.currentGuest;
-    if (await HotelStore.saveRooms(rooms) === false) return;
+    if (await HotelStore.updateRoomStatus(room.roomNo, 'Available') === false) return;
   }
 
   showToast(`Booking #${bookingId} marked as Cancelled.`, 'error');

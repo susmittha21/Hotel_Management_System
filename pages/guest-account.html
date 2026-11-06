@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guest Account | VS Plaza</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <link rel="stylesheet" href="../css/guest.css">
+</head>
+<body class="guest-page">
+  <header class="guest-header">
+    <a class="guest-brand" href="../index.html">VS PLAZA · Guest Portal</a>
+    <div class="guest-header-actions">
+      <a class="btn btn-secondary" href="../index.html">Hotel Website</a>
+      <a class="btn btn-secondary" href="login.html">Staff Login</a>
+    </div>
+  </header>
+
+  <main class="guest-container">
+    <section class="guest-card guest-account-card">
+      <h1>Welcome to VS Plaza</h1>
+      <p class="guest-muted">Sign in or create an account to book rooms and manage your hotel service requests.</p>
+      <div class="guest-auth-toggle">
+        <button id="guestLoginTab" class="btn btn-primary" type="button">Sign In</button>
+        <button id="guestRegisterTab" class="btn btn-secondary" type="button">Create Account</button>
+      </div>
+
+      <form id="guestLoginForm">
+        <div class="form-group">
+          <label class="form-label" for="guestLoginEmail">Email</label>
+          <input class="form-control" id="guestLoginEmail" name="email" type="email" maxlength="100" autocomplete="email" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="guestLoginPassword">Password</label>
+          <input class="form-control" id="guestLoginPassword" name="password" type="password" maxlength="200" autocomplete="current-password" required>
+        </div>
+        <button class="btn btn-primary" type="submit">Sign In</button>
+      </form>
+
+      <form id="guestRegisterForm" hidden>
+        <div class="form-group">
+          <label class="form-label" for="guestFullName">Full Name</label>
+          <input class="form-control" id="guestFullName" name="fullName" type="text" minlength="5" maxlength="100" autocomplete="name" pattern="[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'’-]*(\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'’-]*)+" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="guestRegisterEmail">Email</label>
+          <input class="form-control" id="guestRegisterEmail" name="email" type="email" maxlength="100" autocomplete="email" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="guestRegisterPhone">Phone</label>
+          <input class="form-control" id="guestRegisterPhone" name="phone" type="tel" minlength="8" maxlength="20" pattern="\+?[0-9\s()-]{8,20}" autocomplete="tel" placeholder="+91 98765 43210" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="guestRegisterPassword">Password</label>
+          <input class="form-control" id="guestRegisterPassword" name="password" type="password" minlength="10" maxlength="200" autocomplete="new-password" required>
+          <small class="guest-muted">At least 10 characters, including a letter and a number; no spaces.</small>
+        </div>
+        <button class="btn btn-primary" type="submit">Create Account</button>
+      </form>
+      <p id="guestAccountMessage" class="guest-message" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <script src="../js/app.js"></script>
+  <script src="../js/guest-account.js"></script>
+</body>
+</html>

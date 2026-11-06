@@ -17,8 +17,6 @@
         <a href="bookings.html" class="nav-item"><span class="icon">&#9632;</span><span>Reservations</span></a>
         <a href="guests.html" class="nav-item"><span class="icon">&#9632;</span><span>Guest Directory</span></a>
         <a href="staff.html" class="nav-item"><span class="icon">&#9632;</span><span>Staff Directory</span></a>
-        <a href="housekeeping.html" class="nav-item"><span class="icon">&#9632;</span><span>Housekeeping</span></a>
-        <a href="maintenance.html" class="nav-item"><span class="icon">&#9632;</span><span>Maintenance</span></a>
         <a href="invoices.html" class="nav-item"><span class="icon">&#9632;</span><span>Invoices</span></a>
         <a href="food.html" class="nav-item"><span class="icon">&#9632;</span><span>Food &amp; Orders</span></a>
         <a href="services.html" class="nav-item active"><span class="icon">&#9632;</span><span>Hotel Services</span></a>
@@ -29,11 +27,23 @@
 
     <main class="pms-main">
       <header class="pms-topbar">
-        <div class="topbar-left"><button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button><div class="page-headline"><h1>Hotel Services</h1><p>Manage services and rates offered to guests</p></div></div>
-        <div class="topbar-right"><button class="btn-quick-action" onclick="startNewService()">+ Add Service</button></div>
+        <div class="topbar-left"><button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button><div class="page-headline"><h1>Hotel Services</h1><p>View the service catalog and manage guest requests</p></div></div>
+        <div class="topbar-right"><button id="addServiceButton" class="btn-quick-action" onclick="startNewService()">+ Add Service</button></div>
       </header>
 
       <div class="page-content">
+        <div class="card-panel" style="margin-bottom: 16px;">
+          <div class="card-panel-header"><div class="card-panel-title">Guest Service Requests</div></div>
+          <div class="card-panel-body" style="padding: 0;">
+            <div class="table-responsive">
+              <table class="pms-table">
+                <thead><tr><th>Request ID</th><th>Guest</th><th>Service</th><th>Reservation</th><th>Notes</th><th>Requested</th><th>Status</th></tr></thead>
+                <tbody id="serviceRequestsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <div class="card-panel">
           <div class="card-panel-body" style="padding: 0;">
             <div class="table-responsive">

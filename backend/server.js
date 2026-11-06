@@ -75,20 +75,6 @@ async function startServer() {
       }
     });
 
-    app.get("/api/housekeeping", async (req, res) => {
-      try {
-        const tasks = await db
-          .collection("housekeeping_checklists")
-          .find({})
-          .limit(100)
-          .toArray();
-
-        res.json(tasks);
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
     app.get("/api/folios", async (req, res) => {
       try {
         const folios = await db

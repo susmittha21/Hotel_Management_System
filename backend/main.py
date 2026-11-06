@@ -8,15 +8,16 @@ import threading
 import time
 import json
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import URL, create_engine, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from pymongo.errors import PyMongoError
@@ -32,6 +33,8 @@ from backend.storage import (
     create_invoice,
     dashboard_analytics,
     ensure_extension_tables,
+    ensure_default_rooms,
+    ensure_default_services,
     invoice_options,
     public_available_rooms,
     read_collections,
@@ -54,35 +57,38 @@ DATA_COLLECTIONS = {
     "bookings": "bookingId",
     "departments": "departmentId",
     "staff": "staffId",
-    "housekeeping": "taskId",
-    "maintenance": "issueId",
     "invoices": "invoiceId",
     "food_menu": "itemId",
     "food_orders": "orderId",
     "services": "serviceId",
     "reviews": "reviewId",
+    "service_requests": "requestId",
 }
 ROLE_MODULES = {
     "Hotel Manager": {
-        "dashboard", "rooms", "bookings", "guests", "staff", "housekeeping",
-        "maintenance", "invoices", "food", "services", "reviews",
+        "dashboard", "rooms", "bookings", "guests", "staff", "invoices",
+        "food", "services", "reviews",
     },
-    "Front Desk": {"dashboard", "rooms", "bookings", "guests"},
-    "Accounts Cashier": {"invoices"},
+    "Front Desk": {"dashboard", "rooms", "bookings", "guests", "services"},
+    "Accounts Cashier": {"dashboard", "rooms", "bookings", "guests", "invoices", "services"},
+    "Guest": {"guest-dashboard"},
 }
 COLLECTION_ROLES = {
-    "rooms": {"Hotel Manager", "Front Desk"},
-    "guests": {"Hotel Manager", "Front Desk"},
-    "bookings": {"Hotel Manager", "Front Desk"},
+    "rooms": {"Hotel Manager", "Front Desk", "Accounts Cashier"},
+    "guests": {"Hotel Manager", "Front Desk", "Accounts Cashier"},
+    "bookings": {"Hotel Manager", "Front Desk", "Accounts Cashier"},
     "departments": {"Hotel Manager"},
     "staff": {"Hotel Manager"},
-    "housekeeping": {"Hotel Manager"},
-    "maintenance": {"Hotel Manager"},
     "invoices": {"Hotel Manager", "Accounts Cashier"},
     "food_menu": {"Hotel Manager"},
     "food_orders": {"Hotel Manager"},
-    "services": {"Hotel Manager"},
+    "services": {"Hotel Manager", "Front Desk", "Accounts Cashier"},
     "reviews": {"Hotel Manager"},
+    "service_requests": {"Hotel Manager", "Front Desk", "Accounts Cashier"},
+}
+COLLECTION_WRITE_ROLES = {
+    **COLLECTION_ROLES,
+    "services": {"Hotel Manager"},
 }
 SESSION_COOKIE = "vs_plaza_session"
 SESSION_MAX_AGE = 60 * 60 * 8
@@ -105,7 +111,11 @@ class PaymentRequest(BaseModel):
     paymentMethod: str
 
 
-class PublicBookingRequest(BaseModel):
+class RoomStatusUpdate(BaseModel):
+    status: Literal["Available", "Occupied", "Reserved"]
+
+
+class StaffBookingRequest(BaseModel):
     roomNo: str = Field(min_length=1, max_length=10)
     guestName: str = Field(min_length=2, max_length=100)
     phone: str = Field(min_length=5, max_length=20)
@@ -114,7 +124,126 @@ class PublicBookingRequest(BaseModel):
     checkOut: date
     guestsCount: int = Field(ge=1, le=8)
     specialRequests: str | None = Field(default=None, max_length=1000)
+    bookingSource: Literal["Walk-In", "Online Portal", "Phone Booking", "Corporate"] = "Walk-In"
+    checkInImmediately: bool = False
 
+
+class GuestBookingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    roomNo: str = Field(min_length=1, max_length=10)
+    checkIn: date
+    checkOut: date
+    guestsCount: int = Field(ge=1, le=8)
+    specialRequests: str | None = Field(default=None, max_length=1000)
+    paymentMethod: Literal["UPI", "Credit Card", "Net Banking"]
+
+    @field_validator("roomNo")
+    @classmethod
+    def validate_room_number(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9-]{1,10}", value):
+            raise ValueError("Choose a valid room number.")
+        return value
+
+
+def _normalize_guest_email(value: str) -> str:
+    normalized = value.casefold()
+    if normalized.count("@") != 1:
+        raise ValueError("Enter a valid email address.")
+    local, domain = normalized.rsplit("@", 1)
+    if (
+        len(local) > 64
+        or local.startswith(".")
+        or local.endswith(".")
+        or ".." in local
+        or not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+", local)
+        or not re.fullmatch(
+            r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}",
+            domain,
+        )
+    ):
+        raise ValueError("Enter a valid email address.")
+    return normalized
+
+
+class GuestRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fullName: str = Field(min_length=5, max_length=100)
+    email: str = Field(min_length=6, max_length=100)
+    phone: str = Field(min_length=8, max_length=20)
+    password: str = Field(min_length=10, max_length=200)
+
+    @field_validator("fullName")
+    @classmethod
+    def validate_full_name(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        name_parts = normalized.split()
+        if (
+            len(name_parts) < 2
+            or len(name_parts[0]) > 50
+            or len(" ".join(name_parts[1:])) > 50
+            or not re.fullmatch(
+            r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'’-]*(?: [A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'’-]*)+",
+            normalized,
+            )
+        ):
+            raise ValueError("Enter a valid first and last name.")
+        return normalized
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return _normalize_guest_email(value)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, value: str) -> str:
+        normalized = re.sub(r"[\s()-]", "", value)
+        if not re.fullmatch(r"\+?[0-9]{8,15}", normalized):
+            raise ValueError("Enter a valid phone number with 8 to 15 digits.")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if any(character.isspace() for character in value) or not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
+            raise ValueError("Password must contain a letter and a number, with no spaces.")
+        return value
+
+
+class GuestLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=6, max_length=100)
+    password: str = Field(min_length=1, max_length=200)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return _normalize_guest_email(value)
+
+
+class GuestServiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    serviceId: str = Field(min_length=1, max_length=40)
+    bookingId: str | None = Field(default=None, max_length=20)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class GuestReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    bookingId: str = Field(min_length=1, max_length=20)
+    rating: int = Field(ge=1, le=5)
+    comment: str = Field(min_length=3, max_length=2000)
+
+
+class ServiceRequestStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["Pending", "In Progress", "Completed", "Declined"]
 
 def database_settings() -> dict[str, Any]:
     schema = os.getenv("DB_SCHEMA", "public")
@@ -129,6 +258,16 @@ def database_settings() -> dict[str, Any]:
         "password": os.getenv("DB_PASSWORD", ""),
         "schema": schema,
     }
+
+
+def configured_gst_rate() -> Decimal:
+    try:
+        rate = Decimal(os.getenv("PMS_GST_RATE", "5"))
+    except InvalidOperation:
+        raise RuntimeError("PMS_GST_RATE must be a number from 0 to 100.") from None
+    if not rate.is_finite() or rate < 0 or rate > 100:
+        raise RuntimeError("PMS_GST_RATE must be a number from 0 to 100.")
+    return rate
 
 
 @lru_cache(maxsize=1)
@@ -156,6 +295,8 @@ def ensure_database_schema(schema: str) -> None:
             return
         with get_engine().begin() as connection:
             ensure_extension_tables(connection, schema)
+            ensure_default_rooms(connection, schema)
+            ensure_default_services(connection, schema)
         _initialized_schemas.add(schema)
 
 
@@ -188,6 +329,9 @@ def mongo_invoice_options(
         for line in invoice.get("lines", [])
         if line.get("type") == "Food Order"
     }
+    invoiced_bookings = {
+        invoice.get("bookingId") for invoice in collections["invoices"]
+    }
     return {
         "bookings": [
             {
@@ -201,6 +345,7 @@ def mongo_invoice_options(
             }
             for booking in collections["bookings"]
             if booking.get("status") != "Cancelled"
+            and booking.get("bookingId") not in invoiced_bookings
         ],
         "foodOrders": [
             {
@@ -319,9 +464,12 @@ def _session_secret() -> bytes:
     return secret.encode("utf-8")
 
 
-def _encode_session(username: str, role: str, dbms: str) -> str:
+def _encode_session(username: str, role: str, dbms: str, guest_id: str | None = None) -> str:
+    session = {"sub": username, "role": role, "dbms": dbms, "exp": int(time.time()) + SESSION_MAX_AGE}
+    if guest_id:
+        session["guestId"] = guest_id
     payload = json.dumps(
-        {"sub": username, "role": role, "dbms": dbms, "exp": int(time.time()) + SESSION_MAX_AGE},
+        session,
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
@@ -342,20 +490,28 @@ def current_user(request: Request) -> dict[str, str]:
         if (
             payload.get("exp", 0) < int(time.time())
             or payload.get("role") not in ROLE_MODULES
-            or payload.get("dbms") not in {"postgresql", "mongodb"}
         ):
             raise ValueError("Expired or invalid session.")
+        if payload["role"] == "Guest":
+            guest_id = payload.get("guestId")
+            if not isinstance(guest_id, str) or not re.fullmatch(r"G-[A-F0-9]{16}", guest_id):
+                raise ValueError("Invalid guest session.")
+            if payload.get("dbms") != "postgresql":
+                raise ValueError("Invalid guest session database.")
+            return {"username": payload["sub"], "role": "Guest", "dbms": "postgresql", "guestId": guest_id}
+        if payload.get("dbms") not in {"postgresql", "mongodb"}:
+            raise ValueError("Invalid staff session database.")
         configured = _configured_users().get(payload.get("role"))
         if not configured or configured[0] != payload.get("sub"):
             raise ValueError("Staff account is no longer configured.")
         return {"username": payload["sub"], "role": payload["role"], "dbms": payload["dbms"]}
     except (ValueError, KeyError, TypeError, json.JSONDecodeError, RuntimeError):
-        raise HTTPException(status_code=401, detail="A valid staff login is required.") from None
+        raise HTTPException(status_code=401, detail="A valid login is required.") from None
 
 
 def _require_role(user: dict[str, str], allowed: set[str]) -> None:
     if user["role"] not in allowed:
-        raise HTTPException(status_code=403, detail="Your staff role cannot access this operation.")
+        raise HTTPException(status_code=403, detail="Your account cannot access this operation.")
 
 
 def _verify_origin(request: Request) -> None:
@@ -405,6 +561,226 @@ def login(credentials: LoginRequest, request: Request, response: Response):
     return {"username": username, "role": credentials.role, "dbms": credentials.dbms}
 
 
+def _guest_password_hash(password: str, salt: bytes | None = None) -> str:
+    salt = salt or os.urandom(16)
+    derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 310_000)
+    return f"pbkdf2_sha256$310000${base64.urlsafe_b64encode(salt).decode('ascii')}${base64.urlsafe_b64encode(derived).decode('ascii')}"
+
+
+def _verify_guest_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, rounds, salt_text, expected_text = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256" or int(rounds) != 310_000:
+            return False
+        salt = base64.urlsafe_b64decode(salt_text)
+        expected = base64.urlsafe_b64decode(expected_text)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(rounds))
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+
+def _set_login_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=SESSION_MAX_AGE,
+        httponly=True,
+        secure=os.getenv("PMS_COOKIE_SECURE", "false").strip().casefold() == "true",
+        samesite="strict",
+        path="/",
+    )
+
+
+@app.post("/api/guest/register", status_code=201)
+def register_guest(payload: GuestRegisterRequest, request: Request):
+    _verify_origin(request)
+    try:
+        _session_secret()
+        schema = database_settings()["schema"]
+        guest_id = f"G-{uuid4().hex[:16].upper()}"
+        first_name, _, last_name = payload.fullName.partition(" ")
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                connection.execute(
+                    text(
+                        f'INSERT INTO "{schema}".guest '
+                        "(guest_id, first_name, last_name, phone_number, email, country, id_type, id_number) "
+                        "VALUES (:guest_id, :first_name, :last_name, :phone, :email, 'India', "
+                        "'Not Provided', :id_number)"
+                    ),
+                    {
+                        "guest_id": guest_id,
+                        "first_name": first_name,
+                        "last_name": last_name,
+                        "phone": payload.phone,
+                        "email": payload.email,
+                        "id_number": f"ACCOUNT-{guest_id}",
+                    },
+                )
+                connection.execute(
+                    text(
+                        f'INSERT INTO "{schema}".guest_account (guest_id, email_normalized, password_hash) '
+                        "VALUES (:guest_id, :email, :password_hash)"
+                    ),
+                    {
+                        "guest_id": guest_id,
+                        "email": payload.email,
+                        "password_hash": _guest_password_hash(payload.password),
+                    },
+                )
+            mongo_synced = try_synchronize_mongo(schema)
+        return {
+            "guestId": guest_id,
+            "fullName": payload.fullName,
+            "email": payload.email,
+            "role": "Guest",
+            "registered": True,
+            "mongoSynced": mongo_synced,
+        }
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="An account already exists for that email address.") from None
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to register guest account")
+        raise HTTPException(status_code=503, detail="Unable to create your account right now.") from None
+
+
+@app.post("/api/guest/login")
+def login_guest(credentials: GuestLoginRequest, request: Request, response: Response):
+    _verify_origin(request)
+    try:
+        _session_secret()
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().connect() as connection:
+                account = connection.execute(
+                    text(
+                        f'SELECT guest_id, email_normalized, password_hash '
+                        f'FROM "{schema}".guest_account WHERE email_normalized=:email'
+                    ),
+                    {"email": credentials.email},
+                ).mappings().one_or_none()
+        if not account or not _verify_guest_password(credentials.password, account["password_hash"]):
+            raise HTTPException(status_code=401, detail="Email or password is incorrect.")
+        _set_login_cookie(
+            response,
+            _encode_session(account["email_normalized"], "Guest", "postgresql", account["guest_id"]),
+        )
+        return {
+            "guestId": account["guest_id"],
+            "email": account["email_normalized"],
+            "role": "Guest",
+        }
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to sign in guest")
+        raise HTTPException(status_code=503, detail="Unable to sign in right now.") from None
+
+
+@app.get("/api/guest/account")
+def get_guest_account(user: dict[str, str] = Depends(current_user)):
+    _require_role(user, {"Guest"})
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().connect() as connection:
+                data = read_collections(connection, schema)
+        guest_id = user["guestId"]
+        guest = next((record for record in data["guests"] if record["guestId"] == guest_id), None)
+        if guest is None:
+            raise HTTPException(status_code=404, detail="Guest account not found.")
+        return {
+            "guest": guest,
+            "bookings": [record for record in data["bookings"] if record["guestId"] == guest_id],
+            "services": data["services"],
+            "serviceRequests": [
+                record for record in data["service_requests"] if record["guestId"] == guest_id
+            ],
+            "reviews": [record for record in data["reviews"] if record["guestId"] == guest_id],
+        }
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to load guest account data")
+        raise HTTPException(status_code=503, detail="Unable to load your account right now.") from None
+
+
+@app.post("/api/guest/reviews", status_code=201)
+def create_guest_review(
+    payload: GuestReviewRequest,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Guest"})
+    try:
+        schema = database_settings()["schema"]
+        review_id = f"REV-{uuid4().hex[:16].upper()}"
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                booking = connection.execute(
+                    text(
+                        f'SELECT b.booking_id, b.guest_id, b.booking_status, r.room_id, r.room_number, '
+                        "g.first_name || ' ' || g.last_name AS guest_name "
+                        f'FROM "{schema}".booking b JOIN "{schema}".room r ON r.room_id=b.room_id '
+                        f'JOIN "{schema}".guest g ON g.guest_id=b.guest_id '
+                        "WHERE b.booking_id=:booking_id AND b.guest_id=:guest_id FOR UPDATE OF b"
+                    ),
+                    {"booking_id": payload.bookingId, "guest_id": user["guestId"]},
+                ).mappings().one_or_none()
+                if booking is None:
+                    raise HTTPException(status_code=404, detail="Reservation not found in your account.")
+                if booking["booking_status"] != "Checked-Out":
+                    raise HTTPException(status_code=409, detail="You can review a reservation after check-out.")
+                existing_review = connection.execute(
+                    text(
+                        f'SELECT 1 FROM "{schema}".review WHERE booking_id=:booking_id LIMIT 1'
+                    ),
+                    {"booking_id": payload.bookingId},
+                ).first()
+                if existing_review:
+                    raise HTTPException(status_code=409, detail="A review has already been submitted for this reservation.")
+                connection.execute(
+                    text(
+                        f'INSERT INTO "{schema}".review '
+                        "(review_code, guest_id, room_id, booking_id, rating, "
+                        "cleanliness_rating, service_rating, review_comments) "
+                        "VALUES (:review_id, :guest_id, :room_id, :booking_id, :rating, :rating, :rating, :comment)"
+                    ),
+                    {
+                        "review_id": review_id,
+                        "guest_id": user["guestId"],
+                        "room_id": booking["room_id"],
+                        "booking_id": payload.bookingId,
+                        "rating": payload.rating,
+                        "comment": payload.comment,
+                    },
+                )
+            mongo_synced = try_synchronize_mongo(schema)
+        return {
+            "reviewId": review_id,
+            "guestId": user["guestId"],
+            "guestName": booking["guest_name"],
+            "bookingId": payload.bookingId,
+            "roomNo": booking["room_number"],
+            "rating": payload.rating,
+            "comment": payload.comment,
+            "mongoSynced": mongo_synced,
+        }
+    except HTTPException:
+        raise
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="A review could not be saved for this reservation.") from None
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to save guest review")
+        raise HTTPException(status_code=503, detail="Unable to save your review right now.") from None
+
+
 @app.get("/api/public/availability")
 def get_public_availability(
     request: Request,
@@ -420,26 +796,196 @@ def get_public_availability(
         raise HTTPException(status_code=422, detail="Guest count must be between 1 and 8.")
     try:
         schema = database_settings()["schema"]
+        gst_percent = configured_gst_rate()
+        gst_rate = gst_percent / 100
         with _database_sync_lock:
             ensure_database_schema(schema)
             with get_engine().connect() as connection:
                 rooms = public_available_rooms(
                     connection, schema, check_in, check_out, guests_count, room_type or None
                 )
-        return {"rooms": rooms}
+        nights = (check_out - check_in).days
+        for room in rooms:
+            subtotal = Decimal(str(room["price"])) * nights
+            half_tax = (subtotal * gst_rate / 2).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            room["nights"] = nights
+            room["subtotal"] = float(subtotal)
+            room["taxAmount"] = float(half_tax * 2)
+            room["totalAmount"] = float(subtotal + half_tax * 2)
+        return {"rooms": rooms, "gstRate": float(gst_percent)}
     except (SQLAlchemyError, RuntimeError, ValueError):
         logger.exception("Unable to load public room availability")
         raise HTTPException(status_code=503, detail="Unable to check room availability right now.") from None
 
 
-@app.post("/api/public/bookings", status_code=201)
-def create_website_booking(payload: PublicBookingRequest, request: Request):
+@app.post("/api/guest/bookings", status_code=201)
+def create_guest_booking(
+    payload: GuestBookingRequest,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
     _verify_origin(request)
+    _require_role(user, {"Guest"})
     if payload.checkIn < date.today() or payload.checkOut <= payload.checkIn:
         raise HTTPException(status_code=422, detail="Choose a future check-in date and a later check-out date.")
-    name_parts = payload.guestName.split()
-    if len(name_parts) < 2:
-        raise HTTPException(status_code=422, detail="Enter your first and last name.")
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                booking = create_public_booking(
+                    connection,
+                    schema,
+                    room_number=payload.roomNo,
+                    guest_id=user["guestId"],
+                    check_in=payload.checkIn,
+                    check_out=payload.checkOut,
+                    guests_count=payload.guestsCount,
+                    special_requests=payload.specialRequests,
+                    booking_source="Website",
+                )
+                invoice = create_invoice(
+                    connection,
+                    schema,
+                    booking["bookingId"],
+                    [],
+                    [],
+                    configured_gst_rate() / 100,
+                )
+                payment_transaction_id = settle_invoice(
+                    connection,
+                    schema,
+                    invoice["invoiceId"],
+                    payload.paymentMethod,
+                    simulated=True,
+                )
+            booking["paymentStatus"] = "Paid"
+            booking["invoiceId"] = invoice["invoiceId"]
+            booking["paymentMethod"] = f"{payload.paymentMethod} (Demo)"
+            booking["paymentTransactionId"] = payment_transaction_id
+            booking["paidAmount"] = invoice["total"]
+            booking["mongoSynced"] = try_synchronize_mongo(schema)
+        return booking
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except IntegrityError:
+        logger.exception("PostgreSQL constraint rejected a public room booking")
+        raise HTTPException(status_code=409, detail="Unable to reserve the selected room. Please try another room.") from None
+    except (SQLAlchemyError, RuntimeError):
+        logger.exception("Unable to save a public room booking")
+        raise HTTPException(status_code=503, detail="Unable to save your reservation right now.") from None
+
+
+@app.post("/api/guest/service-requests", status_code=201)
+def create_guest_service_request(
+    payload: GuestServiceRequest,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Guest"})
+    try:
+        schema = database_settings()["schema"]
+        request_id = f"SR-{uuid4().hex[:16].upper()}"
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                service = connection.execute(
+                    text(
+                        f'SELECT name FROM "{schema}".hotel_service WHERE service_code=:service_id'
+                    ),
+                    {"service_id": payload.serviceId},
+                ).scalar_one_or_none()
+                if service is None:
+                    raise HTTPException(status_code=422, detail="Choose a valid hotel service.")
+                if payload.bookingId:
+                    booking = connection.execute(
+                        text(
+                            f'SELECT 1 FROM "{schema}".booking '
+                            "WHERE booking_id=:booking_id AND guest_id=:guest_id"
+                        ),
+                        {"booking_id": payload.bookingId, "guest_id": user["guestId"]},
+                    ).first()
+                    if booking is None:
+                        raise HTTPException(status_code=422, detail="Choose a reservation belonging to your account.")
+                connection.execute(
+                    text(
+                        f'INSERT INTO "{schema}".service_request '
+                        "(request_id, guest_id, service_code, booking_id, notes) "
+                        "VALUES (:request_id, :guest_id, :service_id, :booking_id, :notes)"
+                    ),
+                    {
+                        "request_id": request_id,
+                        "guest_id": user["guestId"],
+                        "service_id": payload.serviceId,
+                        "booking_id": payload.bookingId,
+                        "notes": payload.notes,
+                    },
+                )
+            mongo_synced = try_synchronize_mongo(schema)
+        return {
+            "requestId": request_id,
+            "guestId": user["guestId"],
+            "serviceId": payload.serviceId,
+            "serviceName": service,
+            "bookingId": payload.bookingId,
+            "notes": payload.notes,
+            "status": "Pending",
+            "mongoSynced": mongo_synced,
+        }
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to create guest service request")
+        raise HTTPException(status_code=503, detail="Unable to send your service request right now.") from None
+
+
+@app.put("/api/service-requests/{request_id}/status")
+def update_service_request_status(
+    request_id: str,
+    payload: ServiceRequestStatusUpdate,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Hotel Manager", "Front Desk", "Accounts Cashier"})
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                updated = connection.execute(
+                    text(
+                        f'UPDATE "{schema}".service_request SET request_status=:status '
+                        "WHERE request_id=:request_id RETURNING request_id"
+                    ),
+                    {"status": payload.status, "request_id": request_id},
+                ).scalar_one_or_none()
+                if updated is None:
+                    raise HTTPException(status_code=404, detail="Service request not found.")
+            mongo_synced = try_synchronize_mongo(schema)
+        return {"requestId": updated, "status": payload.status, "mongoSynced": mongo_synced}
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to update guest service request status")
+        raise HTTPException(status_code=503, detail="Unable to update the service request right now.") from None
+
+
+@app.post("/api/bookings", status_code=201)
+def create_staff_booking(
+    payload: StaffBookingRequest,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Hotel Manager", "Front Desk", "Accounts Cashier"})
+    if payload.checkIn < date.today() or payload.checkOut <= payload.checkIn:
+        raise HTTPException(status_code=422, detail="Choose a valid check-in date and a later check-out date.")
+    if len(payload.guestName.split()) < 2:
+        raise HTTPException(status_code=422, detail="Enter the guest's first and last name.")
     try:
         schema = database_settings()["schema"]
         with _database_sync_lock:
@@ -456,17 +1002,135 @@ def create_website_booking(payload: PublicBookingRequest, request: Request):
                     check_out=payload.checkOut,
                     guests_count=payload.guestsCount,
                     special_requests=payload.specialRequests,
+                    booking_source=payload.bookingSource,
+                    check_in_immediately=payload.checkInImmediately,
                 )
             booking["mongoSynced"] = try_synchronize_mongo(schema)
         return booking
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from None
     except IntegrityError:
-        logger.exception("PostgreSQL constraint rejected a public room booking")
+        logger.exception("PostgreSQL constraint rejected a staff room booking")
         raise HTTPException(status_code=409, detail="Unable to reserve the selected room. Please try another room.") from None
     except (SQLAlchemyError, RuntimeError):
-        logger.exception("Unable to save a public room booking")
-        raise HTTPException(status_code=503, detail="Unable to save your reservation right now.") from None
+        logger.exception("Unable to save a staff room booking")
+        raise HTTPException(status_code=503, detail="Unable to save the reservation right now.") from None
+
+
+@app.delete("/api/bookings/{booking_id}")
+def delete_staff_booking(
+    booking_id: str,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Hotel Manager", "Front Desk", "Accounts Cashier"})
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                booking = connection.execute(
+                    text(
+                        f'SELECT b.booking_status, b.room_id, r.room_number, r.room_status '
+                        f'FROM "{schema}".booking b JOIN "{schema}".room r ON r.room_id=b.room_id '
+                        "WHERE b.booking_id=:booking_id FOR UPDATE OF b"
+                    ),
+                    {"booking_id": booking_id},
+                ).mappings().one_or_none()
+                if booking is None:
+                    raise HTTPException(status_code=404, detail="Reservation not found.")
+                if booking["booking_status"] in {"Checked-In", "Checked-Out"}:
+                    raise HTTPException(status_code=409, detail="Completed stays cannot be deleted.")
+                linked = connection.execute(
+                    text(
+                        f'SELECT EXISTS (SELECT 1 FROM "{schema}".invoice WHERE booking_id=:booking_id) '
+                        f'OR EXISTS (SELECT 1 FROM "{schema}".review WHERE booking_id=:booking_id)'
+                    ),
+                    {"booking_id": booking_id},
+                ).scalar_one()
+                if linked:
+                    raise HTTPException(status_code=409, detail="Reservations linked to invoices or reviews cannot be deleted.")
+                stay_table = "check_in_out"
+                for candidate in ("check_in_out", "check_in_check_out"):
+                    if connection.execute(
+                        text("SELECT to_regclass(:table_name)"),
+                        {"table_name": f'"{schema}".{candidate}'},
+                    ).scalar_one():
+                        stay_table = candidate
+                        break
+                connection.execute(
+                    text(f'DELETE FROM "{schema}".{stay_table} WHERE booking_id=:booking_id'),
+                    {"booking_id": booking_id},
+                )
+                connection.execute(
+                    text(f'DELETE FROM "{schema}".booking WHERE booking_id=:booking_id'),
+                    {"booking_id": booking_id},
+                )
+                room_status = booking["room_status"]
+                if room_status == "Reserved":
+                    still_reserved = connection.execute(
+                        text(
+                            f'SELECT 1 FROM "{schema}".booking WHERE room_id=:room_id '
+                            "AND booking_status <> 'Cancelled' LIMIT 1"
+                        ),
+                        {"room_id": booking["room_id"]},
+                    ).first()
+                    if not still_reserved:
+                        room_status = "Available"
+                        connection.execute(
+                            text(f'UPDATE "{schema}".room SET room_status=:status WHERE room_id=:room_id'),
+                            {"status": room_status, "room_id": booking["room_id"]},
+                        )
+            mongo_synced = try_synchronize_mongo(schema)
+        return {
+            "bookingId": booking_id,
+            "roomNo": booking["room_number"],
+            "roomStatus": room_status,
+            "mongoSynced": mongo_synced,
+        }
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to delete staff reservation")
+        raise HTTPException(status_code=503, detail="Unable to delete the reservation right now.") from None
+
+
+@app.put("/api/bookings/{booking_id}")
+def update_staff_booking(
+    booking_id: str,
+    payload: dict[str, Any],
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Hotel Manager", "Front Desk", "Accounts Cashier"})
+    if payload.get("bookingId") != booking_id:
+        raise HTTPException(status_code=422, detail="Reservation ID does not match the request.")
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                exists = connection.execute(
+                    text(f'SELECT 1 FROM "{schema}".booking WHERE booking_id=:booking_id FOR UPDATE'),
+                    {"booking_id": booking_id},
+                ).first()
+                if exists is None:
+                    raise HTTPException(status_code=404, detail="Reservation not found.")
+                replace_collection(connection, schema, "bookings", [payload])
+            mongo_synced = try_synchronize_mongo(schema)
+        return {"bookingId": booking_id, "mongoSynced": mongo_synced}
+    except HTTPException:
+        raise
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except IntegrityError:
+        logger.exception("PostgreSQL constraint rejected a staff reservation update")
+        raise HTTPException(status_code=409, detail="Unable to update the selected reservation.") from None
+    except (SQLAlchemyError, RuntimeError):
+        logger.exception("Unable to update staff reservation")
+        raise HTTPException(status_code=503, detail="Unable to update the reservation right now.") from None
 
 
 @app.get("/api/auth/me")
@@ -519,7 +1183,19 @@ def replace_app_data(
     if collection not in DATA_COLLECTIONS:
         raise HTTPException(status_code=404, detail="Unknown data collection.")
     _verify_origin(request)
-    _require_role(user, COLLECTION_ROLES[collection])
+    _require_role(user, COLLECTION_WRITE_ROLES[collection])
+    if collection == "service_requests":
+        raise HTTPException(
+            status_code=405,
+            detail="Guest service requests are created through the authenticated guest request endpoint.",
+        )
+    if collection in {"rooms", "bookings"}:
+        raise HTTPException(
+            status_code=405,
+            detail=(
+                "Room inventory is fixed, and reservations must use their dedicated create, update, and delete endpoints."
+            ),
+        )
     if collection == "invoices":
         raise HTTPException(
             status_code=405,
@@ -585,12 +1261,7 @@ def get_invoice_options(user: dict[str, str] = Depends(current_user)):
             else:
                 with get_engine().connect() as connection:
                     options = invoice_options(connection, schema)
-        try:
-            rate = Decimal(os.getenv("PMS_GST_RATE", "5"))
-        except InvalidOperation:
-            raise RuntimeError("PMS_GST_RATE must be a number from 0 to 100.") from None
-        if rate < 0 or rate > 100:
-            raise RuntimeError("PMS_GST_RATE must be a number from 0 to 100.")
+        rate = configured_gst_rate()
         options["gstRate"] = float(rate)
         return options
     except (SQLAlchemyError, RuntimeError, ValueError, PyMongoError):
@@ -607,9 +1278,7 @@ def post_invoice(
     _verify_origin(request)
     _require_role(user, {"Hotel Manager", "Accounts Cashier"})
     try:
-        gst_rate = Decimal(os.getenv("PMS_GST_RATE", "5")) / 100
-        if gst_rate < 0 or gst_rate > 1:
-            raise ValueError("PMS_GST_RATE must be a number from 0 to 100.")
+        gst_rate = configured_gst_rate() / 100
         schema = database_settings()["schema"]
         with _database_sync_lock:
             ensure_database_schema(schema)
@@ -665,7 +1334,7 @@ def put_invoice_payment(
 
 @app.get("/api/analytics")
 def get_dashboard_analytics(user: dict[str, str] = Depends(current_user)):
-    _require_role(user, {"Hotel Manager", "Front Desk"})
+    _require_role(user, {"Hotel Manager", "Front Desk", "Accounts Cashier"})
     try:
         schema = database_settings()["schema"]
         with _database_sync_lock:
@@ -712,34 +1381,43 @@ def health_check():
 
 @app.get("/api/rooms")
 def list_rooms(user: dict[str, str] = Depends(current_user)):
-    _require_role(user, {"Hotel Manager", "Front Desk"})
+    _require_role(user, {"Hotel Manager", "Front Desk", "Accounts Cashier"})
     try:
         settings = database_settings()
         if user["dbms"] == "mongodb":
             with _database_sync_lock:
-                records = synchronize_databases(settings["schema"])["rooms"]
-            return [
-                {
-                    "room_number": room["roomNo"],
-                    "room_status": room["status"],
-                    "price": room["price"],
-                    "capacity": room["capacity"],
-                    "floor_number": room["floor"],
-                }
-                for room in records
-            ]
+                return synchronize_databases(settings["schema"])["rooms"]
         engine = get_engine()
         query = text(
             f"""
-            SELECT room_id, room_number, room_type_id, floor_number, room_status,
-                   price, capacity, smoking_allowed, view_type, amenities
-            FROM "{settings['schema']}"."room"
-            ORDER BY room_number
+            SELECT r.room_number, rt.type_name, r.floor_number, r.capacity, r.price,
+                   r.room_status, r.view_type, r.smoking_allowed, r.amenities,
+                   guest.first_name || ' ' || guest.last_name AS current_guest
+            FROM "{settings['schema']}"."room" r
+            LEFT JOIN "{settings['schema']}"."room_type" rt ON rt.room_type_id=r.room_type_id
+            LEFT JOIN "{settings['schema']}"."booking" b
+                ON b.room_id=r.room_id AND b.booking_status='Checked-In'
+            LEFT JOIN "{settings['schema']}"."guest" guest ON guest.guest_id=b.guest_id
+            ORDER BY r.room_number
             """
         )
         with engine.connect() as connection:
             rows = connection.execute(query).mappings().all()
-        return [dict(row) for row in rows]
+        return [
+            {
+                "roomNo": row["room_number"],
+                "type": row["type_name"] or "Standard",
+                "floor": row["floor_number"],
+                "capacity": row["capacity"],
+                "price": float(row["price"]),
+                "status": row["room_status"],
+                "viewType": row["view_type"],
+                "smokingAllowed": row["smoking_allowed"],
+                "amenities": row["amenities"],
+                "currentGuest": row["current_guest"],
+            }
+            for row in rows
+        ]
     except (SQLAlchemyError, PyMongoError) as error:
         logger.exception("Unable to load rooms from the selected database")
         if getattr(getattr(error, "orig", None), "sqlstate", None) == "42P01":
@@ -756,4 +1434,39 @@ def list_rooms(user: dict[str, str] = Depends(current_user)):
         raise HTTPException(
             status_code=503,
             detail="Unable to load rooms. Check the local .env settings.",
+        ) from None
+
+
+@app.put("/api/rooms/{room_number}/status")
+def update_room_status(
+    room_number: str,
+    payload: RoomStatusUpdate,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Hotel Manager", "Front Desk", "Accounts Cashier"})
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                updated = connection.execute(
+                    text(
+                        f'UPDATE "{schema}".room SET room_status=:status '
+                        "WHERE room_number=:room_number RETURNING room_number"
+                    ),
+                    {"status": payload.status, "room_number": room_number},
+                ).mappings().one_or_none()
+                if updated is None:
+                    raise HTTPException(status_code=404, detail="Room not found.")
+            mongo_synced = try_synchronize_mongo(schema)
+        return {"roomNo": updated["room_number"], "status": payload.status, "mongoSynced": mongo_synced}
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to update room availability")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to update room availability. Check the database connection and schema.",
         ) from None

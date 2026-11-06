@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Room Management &amp; Floor Matrix | VS PLAZA PMS</title>
+  <title>Rooms &amp; Availability | VS PLAZA PMS</title>
   <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
@@ -37,6 +37,10 @@
           <span class="icon">&#9632;</span>
           <span>Guest Directory</span>
         </a>
+        <a href="invoices.html" class="nav-item">
+          <span class="icon">&#9632;</span>
+          <span>Invoices</span>
+        </a>
 
       </nav>
 
@@ -58,15 +62,9 @@
         <div class="topbar-left">
           <button class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button>
           <div class="page-headline">
-            <h1>Room Management &amp; Status</h1>
-            <p>Live inventory matrix, occupancy tracking &amp; tariff controls</p>
+            <h1>Rooms &amp; Availability</h1>
+            <p>Browse the shared room inventory and reserve an available room</p>
           </div>
-        </div>
-
-        <div class="topbar-right">
-          <button class="btn-quick-action" onclick="openModal('addRoomModal')">
-            + Add New Room
-          </button>
         </div>
       </header>
 
@@ -79,8 +77,6 @@
             <button class="filter-btn status-filter-btn" data-status="Available">Available</button>
             <button class="filter-btn status-filter-btn" data-status="Occupied">Occupied</button>
             <button class="filter-btn status-filter-btn" data-status="Reserved">Reserved</button>
-            <button class="filter-btn status-filter-btn" data-status="Cleaning">Cleaning</button>
-            <button class="filter-btn status-filter-btn" data-status="Maintenance">Maintenance</button>
           </div>
 
           <div style="display: flex; gap: 12px; align-items: center;">
@@ -106,173 +102,6 @@
         </div>
       </div>
     </main>
-  </div>
-
-  <!-- Add Room Modal -->
-  <div class="modal-backdrop" id="addRoomModal">
-    <div class="modal-dialog">
-      <div class="modal-header">
-        <h3 class="modal-title">Add Room to Inventory</h3>
-        <button class="modal-close" onclick="closeModal('addRoomModal')">&times;</button>
-      </div>
-      <form id="newRoomForm">
-        <div class="modal-body">
-          <div class="form-grid">
-            <div class="form-group">
-              <label class="form-label" for="addRoomNo">Room Number *</label>
-              <input type="text" id="addRoomNo" class="form-control" placeholder="e.g. 105" required>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="addRoomType">Room Category *</label>
-              <select id="addRoomType" class="form-control" required>
-                <option value="Standard">Standard</option>
-                <option value="Deluxe" selected>Deluxe</option>
-                <option value="Suite">Suite</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="addRoomFloor">Floor *</label>
-              <select id="addRoomFloor" class="form-control" required>
-                <option value="1">Floor 1</option>
-                <option value="2">Floor 2</option>
-                <option value="3">Floor 3</option>
-                <option value="4">Floor 4</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="addRoomCapacity">Capacity (Guests)</label>
-              <input type="number" id="addRoomCapacity" class="form-control" value="2" min="1" max="6">
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="addRoomPrice">Price per Night (₹) *</label>
-              <input type="number" id="addRoomPrice" class="form-control" value="4500" min="500" step="100" required>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="addRoomStatus">Initial Status</label>
-              <select id="addRoomStatus" class="form-control">
-                <option value="Available" selected>Available</option>
-                <option value="Cleaning">Cleaning</option>
-                <option value="Maintenance">Maintenance</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="addRoomView">View Type</label>
-              <select id="addRoomView" class="form-control">
-                <option value="City View" selected>City View</option>
-                <option value="Garden View">Garden View</option>
-                <option value="Sea View">Sea View</option>
-                <option value="Courtyard View">Courtyard View</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="addRoomSmoking">Smoking Policy</label>
-              <select id="addRoomSmoking" class="form-control">
-                <option value="No" selected>Non-Smoking</option>
-                <option value="Yes">Smoking Permitted</option>
-              </select>
-            </div>
-
-            <div class="form-group full-width">
-              <label class="form-label" for="addRoomAmenities">Amenities / Description</label>
-              <input type="text" id="addRoomAmenities" class="form-control" placeholder="e.g. King Bed, Garden View, Wi-Fi, Mini Bar">
-            </div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" onclick="closeModal('addRoomModal')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save to Inventory</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Room Quick Action / Edit Modal -->
-  <div class="modal-backdrop" id="roomActionModal">
-    <div class="modal-dialog">
-      <div class="modal-header">
-        <h3 class="modal-title" id="actionModalRoomNo">Room Details</h3>
-        <button class="modal-close" onclick="closeModal('roomActionModal')">&times;</button>
-      </div>
-      <div class="modal-body">
-        <input type="hidden" id="hiddenTargetRoomNo">
-        <div class="form-grid">
-          <div class="form-group">
-            <label class="form-label">Category</label>
-            <select id="actionRoomType" class="form-control">
-              <option value="Standard">Standard</option>
-              <option value="Deluxe">Deluxe</option>
-              <option value="Suite">Suite</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Floor</label>
-            <select id="actionRoomFloor" class="form-control">
-              <option value="1">Floor 1</option>
-              <option value="2">Floor 2</option>
-              <option value="3">Floor 3</option>
-              <option value="4">Floor 4</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="actionRoomCapacity">Capacity (Guests)</label>
-            <input type="number" id="actionRoomCapacity" class="form-control" min="1" max="8">
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Tariff / Night (₹)</label>
-            <input type="number" id="actionRoomPrice" class="form-control">
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Operational Status</label>
-            <select id="actionRoomStatus" class="form-control">
-              <option value="Available">Available (Vacant Clean)</option>
-              <option value="Occupied">Occupied (In-House)</option>
-              <option value="Reserved">Reserved (Incoming)</option>
-              <option value="Cleaning">Cleaning (Dirty)</option>
-              <option value="Maintenance">Out of Order / Maintenance</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="actionRoomView">View Type</label>
-            <select id="actionRoomView" class="form-control">
-              <option value="City View">City View</option>
-              <option value="Garden View">Garden View</option>
-              <option value="Sea View">Sea View</option>
-              <option value="Courtyard View">Courtyard View</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="actionRoomSmoking">Smoking Policy</label>
-            <select id="actionRoomSmoking" class="form-control">
-              <option value="No">Non-Smoking</option>
-              <option value="Yes">Smoking Permitted</option>
-            </select>
-          </div>
-
-          <div class="form-group full-width">
-            <label class="form-label" for="actionRoomAmenities">Amenities / Description</label>
-            <input type="text" id="actionRoomAmenities" class="form-control">
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('roomActionModal')">Cancel</button>
-        <button type="button" class="btn btn-danger" id="deleteRoomButton" onclick="deleteRoomFromModal()">Delete Room</button>
-        <button type="button" class="btn btn-primary" onclick="updateRoomDetailsFromModal()">Update Room Status</button>
-      </div>
-    </div>
   </div>
 
   <script src="../js/app.js"></script>

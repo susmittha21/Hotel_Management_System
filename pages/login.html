@@ -109,6 +109,7 @@
       </form>
 
       <div style="text-align: center; margin-top: 14px;">
+        <a href="guest-account.html" style="display:block;font-size:11px;color:#2c5282;margin-bottom:8px;">Guest Login / Register</a>
         <a href="../index.html" style="font-size: 11px; color: #718096;">&larr; Back to Hotel Website</a>
       </div>
     </div>
@@ -138,7 +139,7 @@
         const startPage = {
           'Hotel Manager': 'dashboard',
           'Front Desk': 'dashboard',
-          'Accounts Cashier': 'invoices'
+          'Accounts Cashier': 'dashboard'
         }[authenticatedRole];
         window.location.href = `${startPage}.html`;
       } catch (error) {

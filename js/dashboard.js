@@ -15,6 +15,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderArrivalsTable();
   renderDeparturesTable();
   renderQuickRoomStatus();
+  renderGuestReservationRequests();
+  renderDashboardServiceRequests();
 });
 
 let dashboardStats = null;
@@ -104,6 +106,47 @@ function renderDeparturesTable() {
   `).join('');
 }
 
+function renderGuestReservationRequests() {
+  const body = document.getElementById('guestReservationRequestsBody');
+  if (!body) return;
+  const requests = HotelStore.getBookings()
+    .filter(booking => ['Website', 'Online Portal'].includes(booking.bookingSource))
+    .slice(0, 8);
+  if (!requests.length) {
+    body.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">No guest reservations have been submitted.</td></tr>';
+    return;
+  }
+  body.innerHTML = requests.map(booking => `
+    <tr>
+      <td>${escapeHtml(booking.bookingId)}</td>
+      <td>${escapeHtml(booking.guestName)}</td>
+      <td>Room ${escapeHtml(booking.roomNo)}</td>
+      <td>${escapeHtml(booking.checkIn)} – ${escapeHtml(booking.checkOut)}</td>
+      <td>${escapeHtml(booking.status)}</td>
+    </tr>
+  `).join('');
+}
+
+function renderDashboardServiceRequests() {
+  const body = document.getElementById('dashboardServiceRequestsBody');
+  if (!body) return;
+  const requests = HotelStore.getServiceRequests().slice(0, 8);
+  if (!requests.length) {
+    body.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">No hotel service requests have been submitted.</td></tr>';
+    return;
+  }
+  body.innerHTML = requests.map(request => `
+    <tr>
+      <td>${escapeHtml(request.requestId)}</td>
+      <td>${escapeHtml(request.guestName)}</td>
+      <td>${escapeHtml(request.serviceName)}</td>
+      <td>${escapeHtml(request.bookingId || '—')}</td>
+      <td>${escapeHtml(request.notes || '—')}</td>
+      <td>${escapeHtml(request.status)}</td>
+    </tr>
+  `).join('');
+}
+
 function renderQuickRoomStatus() {
   const summaryEl = document.getElementById('roomTypeSummaryList');
   if (!summaryEl) return;
@@ -112,8 +155,7 @@ function renderQuickRoomStatus() {
   if (!roomTypes.length) {
     summaryEl.innerHTML = `
       <div style="padding: 18px 8px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
-        No room inventory recorded.<br>
-        <span style="font-size: 0.78rem;">Add rooms in Room Status or sync via database.</span>
+        No room inventory recorded.
       </div>
     `;
     return;
@@ -145,14 +187,12 @@ async function quickCheckIn(bookingId) {
   if (!booking) return;
 
   booking.status = 'Checked-In';
-  if (await HotelStore.saveBookings(bookings) === false) return;
+  if (await HotelStore.updateBooking(booking) === false) return;
 
   // Update room status to Occupied
   const room = rooms.find(r => r.roomNo === booking.roomNo);
   if (room) {
-    room.status = 'Occupied';
-    room.currentGuest = booking.guestName;
-    if (await HotelStore.saveRooms(rooms) === false) return;
+    if (await HotelStore.updateRoomStatus(room.roomNo, 'Occupied', booking.guestName) === false) return;
   }
 
   showToast(`Guest ${booking.guestName} successfully checked into Room ${booking.roomNo}!`, 'success');
@@ -168,17 +208,15 @@ async function quickCheckOut(bookingId, roomNo) {
   const booking = bookings.find(b => b.bookingId === bookingId);
   if (booking) {
     booking.status = 'Checked-Out';
-    if (await HotelStore.saveBookings(bookings) === false) return;
+    if (await HotelStore.updateBooking(booking) === false) return;
   }
 
   const room = rooms.find(r => r.roomNo === roomNo);
   if (room) {
-    room.status = 'Cleaning';
-    delete room.currentGuest;
-    if (await HotelStore.saveRooms(rooms) === false) return;
+    if (await HotelStore.updateRoomStatus(room.roomNo, 'Available') === false) return;
   }
 
-  showToast(`Folio finalized. Room ${roomNo} marked for Housekeeping.`, 'info');
+  showToast(`Folio finalized. Room ${roomNo} is now available.`, 'info');
   await refreshDashboardStats();
   renderArrivalsTable();
   renderDeparturesTable();

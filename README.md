@@ -40,7 +40,7 @@ Simply double-click [`index.html`](index.html) to open the public landing page i
 
 ### Backend Database Purpose
 This frontend is designed as a hotel operations UI for a real backend database system:
-- **PostgreSQL** stores structured business data such as guest records, room inventory, bookings, staff, invoices, payments, housekeeping tasks, and maintenance logs.
+- **PostgreSQL** stores shared business data such as guest records, the fixed room inventory, bookings, staff, invoices, and payments.
 - **MongoDB** stores matching application collection documents. Each app write is mirrored to both configured databases.
 - **Frontend responsibility**: collect user actions, render dashboard tables, and send API requests to backend endpoints. It does not manage business data directly in production.
 - **Current API flow**: browser UI -> FastAPI -> selected database for reads; writes -> PostgreSQL and MongoDB -> response -> browser update.
@@ -59,7 +59,11 @@ The FastAPI service stores management records in PostgreSQL's relational tables 
 3. Start PostgreSQL, then open `http://127.0.0.1:8000/` to confirm the API is running and `http://127.0.0.1:8000/api/health` to confirm the database is connected. MongoDB connectivity is reported separately and is optional when using PostgreSQL. `http://127.0.0.1:8000/docs` lists the available API routes.
 4. `GET /api/data` reads the database chosen at login. Writes, invoice creation, and payments are saved in PostgreSQL first. When MongoDB is available, the API mirrors those records; if it is offline, PostgreSQL operations still succeed and the frontend displays a sync notice. Selecting MongoDB requires it to be reachable. Its collections are refreshed from PostgreSQL, which wins if their data differs.
 
-The public home page uses `GET /api/public/availability` to list rooms that can fit the selected dates and party size. Submitting the form uses `POST /api/public/bookings` to create the guest and confirmed reservation in one PostgreSQL transaction; that reservation appears in the staff Reservations page and is mirrored to MongoDB when available. Guest booking requires the backend, PostgreSQL, and room inventory to be configured. Public API requests are restricted to the configured frontend origins; no staff login is needed for a guest to submit a booking.
+The backend seeds the shared room inventory to 30 rooms when it contains fewer than 30; existing rooms are preserved, and the room catalog cannot be added to or deleted through the app. Room cards link directly to the shared reservation flow. All staff login roles can view rooms and create reservations, and changes are stored in the database rather than isolated in a browser cache.
+
+The landing page sends room reservations to the Guest Portal. Guests register or sign in before checking availability and submitting a reservation. Guest accounts use a separate PostgreSQL `guest_account` table with PBKDF2-hashed passwords; guests can see only their own reservations, hotel service requests, and reviews. Before a reservation is confirmed, `POST /api/guest/bookings` rechecks room capacity and date conflicts, creates a GST-inclusive invoice, and records a clearly labeled simulated demo payment in the same PostgreSQL transaction; a failed checkout leaves no confirmed reservation or invoice. This demo does not charge money or collect card or bank details. Paid guest invoices appear in the Hotel Manager and Accounts Cashier invoice pages. Guest service requests are stored in `service_request` and appear in the staff dashboard and Hotel Services page. Guests can submit one 1–5-star review with a comment for each checked-out reservation; reviews are stored in PostgreSQL and appear in the Hotel Manager Reviews page. These tables are created automatically when the backend initializes the schema.
+
+The guest portal’s food-order button is intentionally disabled until the hotel supplies its ordering URL. Set `window.HOTEL_FOOD_ORDER_URL` in [`js/guest-config.js`](js/guest-config.js) to an `https://` or `http://` address when it is available. Guest and staff forms validate input in the browser and backend; the backend remains authoritative.
 
 Run the frontend separately with `npm.cmd run dev` and open `http://localhost:3000`. PostgreSQL and MongoDB credentials remain on the backend and must never be placed in frontend JavaScript.
 
@@ -85,6 +89,8 @@ The invoice page calculates room charges from the booking tariff and nights, opt
 - **URL:** [`http://localhost:3000/pages/login.html`](pages/login.html)
 - Select the account's role and the database to read from, then sign in with the username and password configured for that role in `.env`.
 - If the server reports a different frontend port because `3000` is in use, use that port and add its origin to backend `CORS_ORIGINS`.
+- All staff roles can view guest service requests on their dashboard and the Hotel Services page. Front Desk and Accounts Cashier staff can update request status; only Hotel Managers can edit the service catalog.
+- **Guest Portal:** [`http://localhost:3000/pages/guest-account.html`](pages/guest-account.html) supports guest account registration and sign-in; guests then use [`guest-dashboard.html`](pages/guest-dashboard.html) to manage their bookings and service requests.
 
 ---
 
@@ -92,7 +98,7 @@ The invoice page calculates room charges from the booking tariff and nights, opt
 
 The app uses both database systems:
 - **PostgreSQL**: Handles relational, ACID-compliant transactions (Guest Profiles, Room Inventory, Bookings, Check-In/Check-Out, Invoices, Staff).
-- **MongoDB**: Holds mirrored documents for the app's rooms, guests, bookings, staff, invoices, housekeeping, maintenance, menu, food orders, services, reviews, and departments collections.
+- **MongoDB**: Holds mirrored documents for the app's rooms, guests, bookings, staff, invoices, menu, food orders, services, service requests, reviews, and departments collections. Guest password hashes remain in PostgreSQL and are never mirrored.
 
 ```
                       ┌───────────────────────────────────────┐
@@ -139,7 +145,7 @@ CREATE TABLE ROOM (
     room_number VARCHAR(10) UNIQUE NOT NULL,
     room_type_id INT REFERENCES ROOM_TYPE(room_type_id),
     floor_number INT NOT NULL,
-    room_status VARCHAR(20) DEFAULT 'Available' CHECK (room_status IN ('Available', 'Occupied', 'Reserved', 'Cleaning', 'Maintenance')),
+    room_status VARCHAR(20) DEFAULT 'Available' CHECK (room_status IN ('Available', 'Occupied', 'Reserved')),
     price NUMERIC(10,2) NOT NULL,
     capacity INT NOT NULL,
     smoking_allowed BOOLEAN DEFAULT FALSE,
@@ -210,6 +216,7 @@ CREATE TABLE PAYMENT (
     amount NUMERIC(10,2) NOT NULL,
     payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     payment_method VARCHAR(20) CHECK (payment_method IN ('Cash', 'Credit Card', 'Debit Card', 'UPI', 'Net Banking')),
+    payment_reference VARCHAR(40),
     payment_status VARCHAR(20) DEFAULT 'Completed'
 );
 
@@ -231,31 +238,13 @@ CREATE TABLE STAFF (
     salary NUMERIC(10,2)
 );
 
--- 9. Housekeeping & Maintenance
-CREATE TABLE HOUSEKEEPING (
-    task_id SERIAL PRIMARY KEY,
-    room_id INT REFERENCES ROOM(room_id),
-    staff_id VARCHAR(20) REFERENCES STAFF(staff_id),
-    task_type VARCHAR(30) DEFAULT 'Daily Cleaning',
-    task_status VARCHAR(20) DEFAULT 'Pending' CHECK (task_status IN ('Pending', 'In Progress', 'Completed', 'Inspected')),
-    scheduled_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE MAINTENANCE (
-    issue_id SERIAL PRIMARY KEY,
-    room_id INT REFERENCES ROOM(room_id),
-    staff_id VARCHAR(20) REFERENCES STAFF(staff_id),
-    issue_type VARCHAR(50) NOT NULL,
-    priority VARCHAR(10) CHECK (priority IN ('Low', 'Medium', 'High', 'Critical')),
-    issue_status VARCHAR(20) DEFAULT 'Reported' CHECK (issue_status IN ('Reported', 'Assigned', 'In Progress', 'Resolved'))
-);
 ```
 
 ---
 
 ### 2. MongoDB NoSQL Database Setup
 
-The API connects to MongoDB using `MONGO_URI` and `MONGO_DB_NAME` from `.env`. Install the dependencies with `py -m pip install -r requirements.txt` and ensure MongoDB is running and reachable before login. The API creates and maintains collections named `rooms`, `guests`, `bookings`, `departments`, `staff`, `housekeeping`, `maintenance`, `invoices`, `food_menu`, `food_orders`, `services`, and `reviews`. Each document is the corresponding frontend entity, keyed by its stable frontend ID. You do not need to run the separate legacy Express server in `backend/server.js` or manually insert the examples below for the current app.
+The API connects to MongoDB using `MONGO_URI` and `MONGO_DB_NAME` from `.env`. Install the dependencies with `py -m pip install -r requirements.txt` and ensure MongoDB is running and reachable before login. The API creates and maintains collections named `rooms`, `guests`, `bookings`, `departments`, `staff`, `invoices`, `food_menu`, `food_orders`, `services`, and `reviews`. Each document is the corresponding frontend entity, keyed by its stable frontend ID. You do not need to run the separate legacy Express server in `backend/server.js` or manually insert the examples below for the current app.
 
 The examples below show an older, optional document-design exercise. They are separate from the current synchronized app collections:
 ```javascript
@@ -322,20 +311,19 @@ The table below maps the UI modules to the intended entities; it is not a claim 
 | Entity | Relational Model / Schema | Web App Implementation & UI Module | Scope |
 | :--- | :--- | :--- | :--- |
 | **`GUEST`** | `Guest_ID (PK)`, `First_Name`, `Last_Name`, `Phone`, `Email`, `ID_Number`, `City`, `State` | [`guests.html`](guests.html) — Guest Directory, KYC modal, Indian ID proof selector | UI concept |
-| **`ROOM`** | `Room_ID (PK)`, `Room_Number`, `Room_Type_ID (FK)`, `Floor_Number`, `Room_Status`, `Price`, `Capacity` | [`rooms.html`](rooms.html) — Room Status Board, Floor Filter, Status badges, Rate in ₹ | UI concept |
+| **`GUEST_ACCOUNT`** | `Guest_ID (PK/FK)`, normalized email, password hash | Guest Portal registration and sign-in; passwords are stored as PBKDF2 hashes in PostgreSQL | Implemented |
+| **`ROOM`** | `Room_ID (PK)`, `Room_Number`, `Room_Type_ID (FK)`, `Floor_Number`, `Room_Status`, `Price`, `Capacity` | [`rooms.html`](rooms.html) — Shared fixed inventory, availability, and reservation links | UI concept |
 | **`ROOM_TYPE`** | `Room_Type_ID (PK)`, `Type_Name`, `Base_Price`, `Max_Occupancy` | Standard, Deluxe, Executive Suite room type classifications | UI concept |
 | **`BOOKING`** | `Booking_ID (PK)`, `Guest_ID (FK)`, `Room_ID (FK)`, `Booking_Date`, `Check_In`, `Check_Out`, `Status` | [`bookings.html`](bookings.html) — New Reservation Modal, Tariff Calculator, Date validator | UI concept |
 | **`CHECK_IN_OUT`** | `Stay_ID (PK)`, `Booking_ID (FK)`, `Actual_CheckIn`, `Actual_CheckOut` | Quick Check-in & Departure folios on [`dashboard.html`](dashboard.html) and [`bookings.html`](bookings.html) | UI concept |
-| **`PAYMENT`** | `Payment_ID (PK)`, `Booking_ID (FK)`, `Amount`, `Payment_Date`, `Payment_Method` | Invoice settlement captures Cash, Card, UPI, or Net Banking | UI concept |
+| **`PAYMENT`** | `Payment_ID (PK)`, `Booking_ID (FK)`, `Amount`, `Payment_Date`, `Payment_Method`, optional demo reference | Invoice payments include clearly marked simulated guest checkouts | Implemented |
 | **`INVOICE`** | `Invoice_ID (PK)`, `Booking_ID (FK)`, `Room_Charges`, `Tax_Amount`, `Discount`, `Total_Amount` | Invoice module stores totals and payment status | UI concept |
 | **`STAFF`** | `Staff_ID (PK)`, `First_Name`, `Phone`, `Department_ID (FK)`, `Job_Role_ID` | Staff directory; login accounts and app roles are configured separately in backend `.env` | UI concept |
-| **`DEPARTMENT`** | `Department_ID (PK)`, `Department_Name`, `Description` | Front Office, Housekeeping, Maintenance, Accounts, Food & Beverage | UI concept |
-| **`HOUSEKEEPING`** | `Task_ID (PK)`, `Room_ID (FK)`, `Staff_ID (FK)`, `Task_Status` | Housekeeping task list and room turnover status | UI concept |
-| **`MAINTENANCE`** | `Issue_ID (PK)`, `Room_ID (FK)`, `Staff_ID (FK)`, `Issue_Type`, `Priority`, `Status` | Room maintenance tickets and status | UI concept |
+| **`DEPARTMENT`** | `Department_ID (PK)`, `Department_Name`, `Description` | Front Office, Accounts, Food & Beverage | UI concept |
 | **`FOOD`** | `Food_ID (PK)`, `Food_Name`, `Category`, `Price` | PostgreSQL food menu table and room-service menu UI | UI concept |
 | **`FOOD_ORDER` & `ORDER_DETAIL`** | Resolves M:N cardinality between `FOOD` and `FOOD_ORDER` | Current UI stores a single menu item per order in PostgreSQL | UI concept |
-| **`HOTEL_SERVICE` & `USAGE`** | `Service_ID (PK)`, `Service_Name`, `Price`; `Usage_ID (PK)` | Hotel service catalog; service usage/billing is not implemented | UI concept |
-| **`REVIEW`** | `Review_ID (PK)`, `Booking_ID (FK)`, `Rating`, `Comments` | Reviews are stored in PostgreSQL and linked to a booking | UI concept |
+| **`HOTEL_SERVICE` & `SERVICE_REQUEST`** | Service catalog; request links guest, service, optional booking, notes, status, and timestamp | Guest requests appear in the guest portal, staff dashboard, and Hotel Services page | Implemented |
+| **`REVIEW`** | `Review_ID (PK)`, `Booking_ID (FK)`, `Rating`, `Comments` | Guest Portal submission for a guest's checked-out booking; visible in the Hotel Manager Reviews page | Implemented |
 
 ---
 
@@ -345,16 +333,17 @@ The backend authenticates accounts configured in `.env`, checks the role selecte
 
 | Login role | Frontend modules available |
 | :--- | :--- |
-| Hotel Manager | All modules |
-| Front Desk | Dashboard, Room Status, Reservations, Guest Directory |
-| Accounts Cashier | Invoices |
+| Hotel Manager | Dashboard, rooms, reservations, guests, staff, invoices, food, services, and reviews |
+| Front Desk | Dashboard, Room Status, Reservations, Guest Directory, Hotel Services |
+| Accounts Cashier | Dashboard, Room Status, Reservations, Guest Directory, Invoices, Hotel Services |
 
 The backend enforces these module permissions on API requests. Staff login accounts are configured through the backend `.env` file.
 
 ### Role summary
-- **Hotel Manager:** full access to every frontend module.
-- **Front Desk:** dashboard, rooms, bookings, and guest directory.
-- **Accounts Cashier:** invoices.
+- **Hotel Manager:** access to the management, room, reservation, and guest modules.
+- **Front Desk:** dashboard, rooms, bookings, guest directory, and guest service requests.
+- **Accounts Cashier:** dashboard, rooms, bookings, guest directory, invoices, and guest service requests.
+- **Guest:** own reservations, service requests, reviews, and available services only.
 
 ---
 
@@ -364,7 +353,7 @@ The backend enforces these module permissions on API requests. Staff login accou
 | :--- | :--- | :--- | :--- |
 | **Week 1** | **UI/UX Foundation & Front-Desk Operations** | Public Landing Page, Staff Login, Operations Dashboard, Room Status Board, Reservations & Guest Directory | Pure clean client state ready for live DB connectors; Schema specifications matching ChatGPT ER model. |
 | **Week 2** | **Billing, Folio Management & Invoicing** | Invoice calculation, GST tax breakdown (CGST + SGST), and payment recording (Cash, Card, UPI) | PostgreSQL `INVOICE` and `PAYMENT` tables, mirrored to MongoDB invoice documents. |
-| **Week 3** | **Housekeeping, Maintenance & Staff Roster** | Floor-by-floor cleaning board, maintenance issue ticketing, staff shift management, department directory | **PostgreSQL**: `STAFF`, `DEPARTMENT`, `HOUSEKEEPING`, `MAINTENANCE` tables with foreign key constraints. |
+| **Week 3** | **Staff Roster** | Staff shift management and department directory | **PostgreSQL**: `STAFF` and `DEPARTMENT` tables with foreign key constraints. |
 | **Week 4** | **Dual-Database Persistence and Operations** | Frontend collections, menu/order/review screens, role-protected API, invoice calculation, and dashboard analytics | PostgreSQL relational persistence with MongoDB document mirroring for the app collections. |
 
 ---
@@ -373,7 +362,7 @@ The backend enforces these module permissions on API requests. Staff login accou
 
 - **Database persistence:** PostgreSQL stores relational records; corresponding app entities are mirrored to MongoDB documents. PostgreSQL is the source of truth when the API reconciles the MongoDB copy.
 - **Optional MongoDB mirror:** The API writes to PostgreSQL first, then attempts to synchronize application data to MongoDB. MongoDB downtime does not block PostgreSQL logins, reads, writes, invoice creation, or payments. The frontend displays a notice if a write was not mirrored; after MongoDB is available, choose MongoDB and log in to refresh it from PostgreSQL.
-- **Browser cache:** The frontend updates `localStorage` only after a successful API response. PostgreSQL may import existing cached records once when its collections are empty; it then becomes the source of truth.
+- **Browser cache:** `localStorage` is a display cache, not the room or reservation source of truth. Existing non-room records may be imported once when their PostgreSQL collections are empty.
 - **Additional PostgreSQL tables:** The API creates `food_menu`, `food_order`, and `hotel_service` on first use, and adds a stable external code to the existing `review` table.
 - **Authentication and authorization:** Accounts are configured on the backend by role; the browser receives an HTTP-only signed session cookie. API permissions are enforced server-side.
 - **Invoices:** The server computes room, food, and selected service charges, adds the configured GST percentage as equal CGST/SGST amounts, and records invoice/payment details in PostgreSQL and the mirrored MongoDB invoice document.

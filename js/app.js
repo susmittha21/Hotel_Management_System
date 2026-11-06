@@ -10,12 +10,11 @@ const STORAGE_KEYS = {
   AUTH: 'vs_hotel_auth',
   STAFF: 'vs_hotel_staff',
   DEPARTMENTS: 'vs_hotel_departments',
-  HOUSEKEEPING: 'vs_hotel_housekeeping',
-  MAINTENANCE: 'vs_hotel_maintenance',
   INVOICES: 'vs_hotel_invoices',
   FOOD_MENU: 'vs_hotel_food_menu',
   FOOD_ORDERS: 'vs_hotel_food_orders',
   SERVICES: 'vs_hotel_services',
+  SERVICE_REQUESTS: 'vs_hotel_service_requests',
   REVIEWS: 'vs_hotel_reviews',
 };
 
@@ -27,13 +26,9 @@ const DEFAULT_BOOKINGS = [];
 const DEFAULT_STAFF = [];
 const DEFAULT_DEPARTMENTS = [
   { departmentId: 'DEP-01', name: 'Front Office', description: 'Front desk, reservations, guest services' },
-  { departmentId: 'DEP-02', name: 'Housekeeping', description: 'Room cleaning and room readiness' },
-  { departmentId: 'DEP-03', name: 'Maintenance', description: 'Repair and room upkeep' },
-  { departmentId: 'DEP-04', name: 'Accounts', description: 'Billing and settlement' },
-  { departmentId: 'DEP-05', name: 'Food & Beverage', description: 'Dining and in-room orders' }
+  { departmentId: 'DEP-02', name: 'Accounts', description: 'Billing and settlement' },
+  { departmentId: 'DEP-03', name: 'Food & Beverage', description: 'Dining and in-room orders' }
 ];
-const DEFAULT_HOUSEKEEPING = [];
-const DEFAULT_MAINTENANCE = [];
 const DEFAULT_INVOICES = [];
 const DEFAULT_FOOD_MENU = [
   { itemId: 'FD-01', name: 'Paneer Butter Masala', category: 'Main Course', price: 320 },
@@ -44,21 +39,23 @@ const DEFAULT_FOOD_MENU = [
 const DEFAULT_FOOD_ORDERS = [];
 const DEFAULT_SERVICES = [
   { serviceId: 'SV-01', name: 'Airport Pickup', price: 850, category: 'Transfer' },
-  { serviceId: 'SV-02', name: 'Laundry Service', price: 320, category: 'Housekeeping' },
+  { serviceId: 'SV-02', name: 'Laundry Service', price: 320, category: 'Laundry' },
   { serviceId: 'SV-03', name: 'Spa Session', price: 1500, category: 'Wellness' }
 ];
 const DEFAULT_REVIEWS = [];
 
 const ROLE_MODULES = {
-  'Hotel Manager': ['dashboard', 'rooms', 'bookings', 'guests', 'staff', 'housekeeping', 'maintenance', 'invoices', 'food', 'services', 'reviews'],
-  'Front Desk': ['dashboard', 'rooms', 'bookings', 'guests'],
-  'Accounts Cashier': ['invoices']
+  'Hotel Manager': ['dashboard', 'rooms', 'bookings', 'guests', 'staff', 'invoices', 'food', 'services', 'reviews'],
+  'Front Desk': ['dashboard', 'rooms', 'bookings', 'guests', 'services'],
+  'Accounts Cashier': ['dashboard', 'rooms', 'bookings', 'guests', 'invoices', 'services'],
+  'Guest': ['guest-dashboard']
 };
 
 const ROLE_HOME_MODULE = {
   'Hotel Manager': 'dashboard',
   'Front Desk': 'dashboard',
-  'Accounts Cashier': 'invoices'
+  'Accounts Cashier': 'dashboard',
+  'Guest': 'guest-dashboard'
 };
 
 const API_BASE_URL = (window.HOTEL_API_BASE_URL || 'http://localhost:8000/api').replace(/\/+$/, '');
@@ -68,12 +65,11 @@ const DATA_COLLECTIONS = {
   [STORAGE_KEYS.BOOKINGS]: 'bookings',
   [STORAGE_KEYS.DEPARTMENTS]: 'departments',
   [STORAGE_KEYS.STAFF]: 'staff',
-  [STORAGE_KEYS.HOUSEKEEPING]: 'housekeeping',
-  [STORAGE_KEYS.MAINTENANCE]: 'maintenance',
   [STORAGE_KEYS.INVOICES]: 'invoices',
   [STORAGE_KEYS.FOOD_MENU]: 'food_menu',
   [STORAGE_KEYS.FOOD_ORDERS]: 'food_orders',
   [STORAGE_KEYS.SERVICES]: 'services',
+  [STORAGE_KEYS.SERVICE_REQUESTS]: 'service_requests',
   [STORAGE_KEYS.REVIEWS]: 'reviews'
 };
 const pendingCollectionWrites = new Map();
@@ -140,9 +136,31 @@ async function apiRequest(path, options = {}) {
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(result.detail || `Request failed (${response.status}).`);
+    throw new Error(formatApiError(result.detail) || `Request failed (${response.status}).`);
   }
   return response.status === 204 ? null : response.json();
+}
+
+function formatApiError(detail) {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(item => {
+      if (typeof item === 'string') return item;
+      if (!item || typeof item !== 'object') return '';
+      const location = Array.isArray(item.loc) ? item.loc.filter(part => part !== 'body').join(' → ') : '';
+      const fieldName = location
+        ? location.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, character => character.toUpperCase())
+        : '';
+      const field = fieldName ? `${fieldName}: ` : '';
+      return `${field}${String(item.msg || item.message || JSON.stringify(item)).replace(/^Value error, /, '')}`;
+    }).filter(Boolean).join(' ');
+  }
+  if (detail && typeof detail === 'object') {
+    if (typeof detail.message === 'string') return detail.message;
+    if (typeof detail.msg === 'string') return detail.msg;
+    return JSON.stringify(detail);
+  }
+  return '';
 }
 
 // Automatic cleanup of legacy demo records so database integration starts clean
@@ -171,6 +189,8 @@ const HotelStore = {
     if (!this._databaseReady) {
       this._databaseReady = apiRequest('/data')
         .then(async data => {
+          const currentUser = await apiRequest('/auth/me');
+          const canManageServices = currentUser.role === 'Hotel Manager';
           const legacyRecords = {};
           Object.entries(DATA_COLLECTIONS).forEach(([storageKey, collection]) => {
             if (!Object.hasOwn(data, collection)) return;
@@ -182,11 +202,14 @@ const HotelStore = {
               console.warn(`Ignoring invalid local cache for ${collection}.`, error);
             }
             const databaseRecords = data[collection] || [];
-            const records = collection === 'invoices'
+            const records = ['invoices', 'rooms', 'bookings', 'service_requests'].includes(collection) ||
+              collection === 'services' && !canManageServices
               ? databaseRecords
               : databaseRecords.length ? databaseRecords : existingRecords;
             localStorage.setItem(storageKey, JSON.stringify(records));
-            if (collection !== 'invoices' && !databaseRecords.length && existingRecords.length) {
+            if (!['invoices', 'rooms', 'bookings', 'service_requests'].includes(collection) &&
+                (collection !== 'services' || canManageServices) &&
+                !databaseRecords.length && existingRecords.length) {
               legacyRecords[collection] = { storageKey, records };
             }
           });
@@ -199,7 +222,7 @@ const HotelStore = {
           if (Object.hasOwn(data, 'food_menu') && data.food_menu.length === 0) {
             if (!legacyRecords.food_menu) migrations.push(this.saveFoodMenu(DEFAULT_FOOD_MENU));
           }
-          if (Object.hasOwn(data, 'services') && data.services.length === 0) {
+          if (canManageServices && Object.hasOwn(data, 'services') && data.services.length === 0) {
             if (!legacyRecords.services) migrations.push(this.saveServices(DEFAULT_SERVICES));
           }
           const saves = await Promise.all(migrations);
@@ -230,8 +253,33 @@ const HotelStore = {
     }
   },
 
-  saveRooms(rooms) {
-    return saveCollectionToDatabase(STORAGE_KEYS.ROOMS, 'rooms', rooms);
+  async refreshRooms() {
+    const rooms = await apiRequest('/rooms');
+    localStorage.setItem(STORAGE_KEYS.ROOMS, JSON.stringify(rooms));
+    return rooms;
+  },
+
+  async updateRoomStatus(roomNo, status, currentGuest) {
+    try {
+      const result = await apiRequest(`/rooms/${encodeURIComponent(roomNo)}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status })
+      });
+      const rooms = this.getRooms();
+      const room = rooms.find(item => item.roomNo === roomNo);
+      if (room) {
+        room.status = result.status;
+        if (currentGuest) room.currentGuest = currentGuest;
+        else if (result.status !== 'Occupied') delete room.currentGuest;
+        localStorage.setItem(STORAGE_KEYS.ROOMS, JSON.stringify(rooms));
+      }
+      notifyMongoSyncStatus(result.mongoSynced, 'Room availability saved in PostgreSQL.');
+      return true;
+    } catch (error) {
+      console.error(`Unable to update room ${roomNo} availability.`, error);
+      showToast(`Could not update room ${roomNo}: ${error.message}`, 'error');
+      return false;
+    }
   },
 
   getGuests() {
@@ -268,8 +316,24 @@ const HotelStore = {
     }
   },
 
-  saveBookings(bookings) {
-    return saveCollectionToDatabase(STORAGE_KEYS.BOOKINGS, 'bookings', bookings);
+  async updateBooking(booking) {
+    try {
+      const result = await apiRequest(`/bookings/${encodeURIComponent(booking.bookingId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(booking)
+      });
+      const bookings = this.getBookings();
+      const index = bookings.findIndex(item => item.bookingId === booking.bookingId);
+      if (index >= 0) bookings[index] = booking;
+      else bookings.unshift(booking);
+      localStorage.setItem(STORAGE_KEYS.BOOKINGS, JSON.stringify(bookings));
+      notifyMongoSyncStatus(result.mongoSynced, 'Reservation saved in PostgreSQL.');
+      return true;
+    } catch (error) {
+      console.error(`Unable to update reservation ${booking.bookingId}.`, error);
+      showToast(`Could not update reservation: ${error.message}`, 'error');
+      return false;
+    }
   },
 
   getDepartments() {
@@ -293,26 +357,6 @@ const HotelStore = {
 
   saveStaff(staff) {
     return saveCollectionToDatabase(STORAGE_KEYS.STAFF, 'staff', staff);
-  },
-
-  getHousekeeping() {
-    const data = localStorage.getItem(STORAGE_KEYS.HOUSEKEEPING);
-    if (!data) return DEFAULT_HOUSEKEEPING;
-    try { return JSON.parse(data); } catch { return DEFAULT_HOUSEKEEPING; }
-  },
-
-  saveHousekeeping(list) {
-    return saveCollectionToDatabase(STORAGE_KEYS.HOUSEKEEPING, 'housekeeping', list);
-  },
-
-  getMaintenance() {
-    const data = localStorage.getItem(STORAGE_KEYS.MAINTENANCE);
-    if (!data) return DEFAULT_MAINTENANCE;
-    try { return JSON.parse(data); } catch { return DEFAULT_MAINTENANCE; }
-  },
-
-  saveMaintenance(list) {
-    return saveCollectionToDatabase(STORAGE_KEYS.MAINTENANCE, 'maintenance', list);
   },
 
   getInvoices() {
@@ -392,6 +436,31 @@ const HotelStore = {
     return saveCollectionToDatabase(STORAGE_KEYS.SERVICES, 'services', services);
   },
 
+  getServiceRequests() {
+    const data = localStorage.getItem(STORAGE_KEYS.SERVICE_REQUESTS);
+    if (!data) return [];
+    try { return JSON.parse(data); } catch { return []; }
+  },
+
+  async updateServiceRequest(requestId, status) {
+    try {
+      const result = await apiRequest(`/service-requests/${encodeURIComponent(requestId)}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status })
+      });
+      const requests = this.getServiceRequests().map(request =>
+        request.requestId === requestId ? { ...request, status: result.status } : request
+      );
+      localStorage.setItem(STORAGE_KEYS.SERVICE_REQUESTS, JSON.stringify(requests));
+      notifyMongoSyncStatus(result.mongoSynced, 'Service request status saved in PostgreSQL.');
+      return true;
+    } catch (error) {
+      console.error(`Unable to update service request ${requestId}.`, error);
+      showToast(`Could not update service request: ${error.message}`, 'error');
+      return false;
+    }
+  },
+
   getReviews() {
     const data = localStorage.getItem(STORAGE_KEYS.REVIEWS);
     if (!data) return DEFAULT_REVIEWS;
@@ -408,8 +477,6 @@ const HotelStore = {
     localStorage.setItem(STORAGE_KEYS.BOOKINGS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.DEPARTMENTS, JSON.stringify(DEFAULT_DEPARTMENTS));
-    localStorage.setItem(STORAGE_KEYS.HOUSEKEEPING, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.MAINTENANCE, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.FOOD_MENU, JSON.stringify(DEFAULT_FOOD_MENU));
     localStorage.setItem(STORAGE_KEYS.FOOD_ORDERS, JSON.stringify([]));
@@ -507,7 +574,7 @@ function bindActionMenu(tableBody, handler) {
 // Global initialization for live clock and common triggers
 document.addEventListener('DOMContentLoaded', async () => {
   const pageName = window.location.pathname.split('/').pop().replace(/\.html$/, '');
-  if (pageName && pageName !== 'login' && pageName !== 'index') {
+  if (pageName && !['login', 'index', 'guest-account'].includes(pageName)) {
     let auth;
     try {
       const session = await apiRequest('/auth/me');
@@ -534,7 +601,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     document.querySelectorAll('a[href$=".html"]').forEach(link => {
       const moduleName = link.getAttribute('href').split('/').pop().replace(/\.html$/, '');
-      if (!allowedModules.includes(moduleName)) {
+      if (!allowedModules.includes(moduleName) && !['index', 'guest-account', 'login'].includes(moduleName)) {
         link.remove();
       }
     });

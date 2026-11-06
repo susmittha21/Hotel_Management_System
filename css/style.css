@@ -28,10 +28,6 @@
   --status-occupied-text: #9b2c2c;
   --status-reserved-bg: #e9d8fd;
   --status-reserved-text: #553c9a;
-  --status-cleaning-bg: #fefcbf;
-  --status-cleaning-text: #975a16;
-  --status-maintenance-bg: #e2e8f0;
-  --status-maintenance-text: #4a5568;
 
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
   --shadow-md: 0 2px 6px rgba(0,0,0,0.1);
@@ -485,8 +481,8 @@ a:hover { text-decoration: underline; }
 .badge-available { background: var(--status-available-bg); color: var(--status-available-text); }
 .badge-occupied { background: var(--status-occupied-bg); color: var(--status-occupied-text); }
 .badge-reserved { background: var(--status-reserved-bg); color: var(--status-reserved-text); }
-.badge-cleaning { background: var(--status-cleaning-bg); color: var(--status-cleaning-text); }
-.badge-maintenance { background: var(--status-maintenance-bg); color: var(--status-maintenance-text); }
+.badge-cancelled { background: #e2e8f0; color: #4a5568; }
+.badge-unavailable { background: #e2e8f0; color: #4a5568; }
 
 /* ==========================================================================
    ROOM GRID
@@ -556,8 +552,6 @@ a:hover { text-decoration: underline; }
 .room-card.status-available { border-left-color: #48bb78; }
 .room-card.status-occupied { border-left-color: #e53e3e; }
 .room-card.status-reserved { border-left-color: #805ad5; }
-.room-card.status-cleaning { border-left-color: #d69e2e; }
-.room-card.status-maintenance { border-left-color: #a0aec0; }
 
 .room-card-head {
   display: flex;

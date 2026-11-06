@@ -9,8 +9,7 @@ const collectionNames = [
   "restaurant_orders",
   "guest_reviews",
   "audit_logs",
-  "folio_details",
-  "housekeeping_checklists"
+  "folio_details"
 ];
 
 for (const name of collectionNames) {
@@ -19,7 +18,7 @@ for (const name of collectionNames) {
   }
 }
 
-print("All five collections are ready!");
+print("All four collections are ready!");
 
 // ==========================================
 // 2. RESTAURANT ORDERS
@@ -142,32 +141,6 @@ db.folio_details.updateOne(
 );
 
 // ==========================================
-// 6. HOUSEKEEPING CHECKLISTS
-// ==========================================
-
-db.housekeeping_checklists.updateOne(
-  { checklist_id: "HK-201" },
-  {
-    $set: {
-      checklist_id: "HK-201",
-      room_number: "201",
-      booking_id: "B-1081",
-      assigned_to: "housekeeping_staff_01",
-      date: new Date(),
-      tasks: [
-        { task: "Change bed sheets", completed: true },
-        { task: "Clean bathroom", completed: true },
-        { task: "Replace towels", completed: false },
-        { task: "Restock toiletries", completed: false }
-      ],
-      status: "In Progress",
-      remarks: "Room cleaning is in progress."
-    }
-  },
-  { upsert: true }
-);
-
-// ==========================================
 // 7. CREATE INDEXES
 // ==========================================
 
@@ -186,13 +159,6 @@ db.audit_logs.createIndex({ actor: 1 });
 db.folio_details.createIndex({ folio_id: 1 }, { unique: true });
 db.folio_details.createIndex({ booking_id: 1 });
 
-db.housekeeping_checklists.createIndex(
-  { checklist_id: 1 },
-  { unique: true }
-);
-db.housekeeping_checklists.createIndex({ room_number: 1 });
-db.housekeeping_checklists.createIndex({ status: 1 });
-
 print("Indexes created successfully!");
 
 // ==========================================
@@ -210,9 +176,6 @@ db.audit_logs.find();
 
 print("FOLIO DETAILS:");
 db.folio_details.find();
-
-print("HOUSEKEEPING CHECKLISTS:");
-db.housekeeping_checklists.find();
 
 // ==========================================
 // 9. UPDATE OPERATION EXAMPLE
