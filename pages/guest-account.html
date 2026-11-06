@@ -32,7 +32,12 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="guestLoginPassword">Password</label>
-          <input class="form-control" id="guestLoginPassword" name="password" type="password" maxlength="200" autocomplete="current-password" required>
+          <div class="password-input-wrap">
+            <input class="form-control" id="guestLoginPassword" name="password" type="password" maxlength="200" autocomplete="current-password" required>
+            <button class="password-visibility-toggle" type="button" data-password-toggle="guestLoginPassword" aria-label="Show password" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
         </div>
         <button class="btn btn-primary" type="submit">Sign In</button>
       </form>
@@ -52,7 +57,12 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="guestRegisterPassword">Password</label>
-          <input class="form-control" id="guestRegisterPassword" name="password" type="password" minlength="10" maxlength="200" autocomplete="new-password" required>
+          <div class="password-input-wrap">
+            <input class="form-control" id="guestRegisterPassword" name="password" type="password" minlength="10" maxlength="200" autocomplete="new-password" required>
+            <button class="password-visibility-toggle" type="button" data-password-toggle="guestRegisterPassword" aria-label="Show password" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
           <small class="guest-muted">At least 10 characters, including a letter and a number; no spaces.</small>
         </div>
         <button class="btn btn-primary" type="submit">Create Account</button>

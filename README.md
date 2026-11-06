@@ -61,9 +61,9 @@ The FastAPI service stores management records in PostgreSQL's relational tables 
 
 The backend seeds the shared room inventory to 30 rooms when it contains fewer than 30; existing rooms are preserved, and the room catalog cannot be added to or deleted through the app. Room cards link directly to the shared reservation flow. All staff login roles can view rooms and create reservations, and changes are stored in the database rather than isolated in a browser cache.
 
-The landing page sends room reservations to the Guest Portal. Guests register or sign in before checking availability and submitting a reservation. Guest accounts use a separate PostgreSQL `guest_account` table with PBKDF2-hashed passwords; guests can see only their own reservations, hotel service requests, and reviews. Before a reservation is confirmed, `POST /api/guest/bookings` rechecks room capacity and date conflicts, creates a GST-inclusive invoice, and records a clearly labeled simulated demo payment in the same PostgreSQL transaction; a failed checkout leaves no confirmed reservation or invoice. This demo does not charge money or collect card or bank details. Paid guest invoices appear in the Hotel Manager and Accounts Cashier invoice pages. Guest service requests are stored in `service_request` and appear in the staff dashboard and Hotel Services page. Guests can submit one 1–5-star review with a comment for each checked-out reservation; reviews are stored in PostgreSQL and appear in the Hotel Manager Reviews page. These tables are created automatically when the backend initializes the schema.
+The landing page sends room reservations to the Guest Portal. Guests register or sign in before checking availability and submitting a reservation. Guest accounts use a separate PostgreSQL `guest_account` table with PBKDF2-hashed passwords; guests can see only their own reservations, hotel service requests, and reviews. Before a reservation is confirmed, `POST /api/guest/bookings` rechecks room capacity and date conflicts, creates a GST-inclusive invoice, and records payment completion in the same PostgreSQL transaction; this project flow does not charge or transfer money. For UPI, guests scan a clearly labeled no-charge QR simulation and confirm the scan before checkout; this is not a real UPI payment or a verified bank transaction. The invoice and reservation history indicate that no money was charged. A failed checkout leaves no confirmed reservation or invoice. Paid guest invoices appear in the Hotel Manager and Accounts Cashier invoice pages. Guest service requests are stored in `service_request` and appear in the staff dashboard and Hotel Services page. Guests can submit one 1–5-star review with a comment for each checked-out reservation; reviews are stored in PostgreSQL and appear in the Hotel Manager Reviews page. These tables are created automatically when the backend initializes the schema.
 
-The guest portal’s food-order button is intentionally disabled until the hotel supplies its ordering URL. Set `window.HOTEL_FOOD_ORDER_URL` in [`js/guest-config.js`](js/guest-config.js) to an `https://` or `http://` address when it is available. Guest and staff forms validate input in the browser and backend; the backend remains authoritative.
+The guest portal’s food-order button opens the provided food ordering site in a new tab; its URL is configured in [`js/guest-config.js`](js/guest-config.js). Food Orders is not available as a staff dashboard module or quick action. Guest and staff forms validate input in the browser and backend; the backend remains authoritative.
 
 Run the frontend separately with `npm.cmd run dev` and open `http://localhost:3000`. PostgreSQL and MongoDB credentials remain on the backend and must never be placed in frontend JavaScript.
 
@@ -83,7 +83,7 @@ The database selector does not connect to a database on the browser's laptop. Wh
 
 #### Invoice calculation
 
-The invoice page calculates room charges from the booking tariff and nights, optionally adds the guest's unbilled food orders and selected services, then adds GST split equally into CGST and SGST. `PMS_GST_RATE` defaults to **5% for this project demo**; configure it to the rate required by your assignment. This configurable example is not tax advice and does not determine the legally applicable rate.
+The invoice page calculates room charges from the booking tariff and nights, optionally adds the guest's unbilled food orders and selected services, then adds GST split equally into CGST and SGST. `PMS_GST_RATE` defaults to **5% for this project**; configure it to the rate required by your assignment. This configurable example is not tax advice and does not determine the legally applicable rate.
 
 ### Staff Login
 - **URL:** [`http://localhost:3000/pages/login.html`](pages/login.html)
@@ -316,7 +316,7 @@ The table below maps the UI modules to the intended entities; it is not a claim 
 | **`ROOM_TYPE`** | `Room_Type_ID (PK)`, `Type_Name`, `Base_Price`, `Max_Occupancy` | Standard, Deluxe, Executive Suite room type classifications | UI concept |
 | **`BOOKING`** | `Booking_ID (PK)`, `Guest_ID (FK)`, `Room_ID (FK)`, `Booking_Date`, `Check_In`, `Check_Out`, `Status` | [`bookings.html`](bookings.html) — New Reservation Modal, Tariff Calculator, Date validator | UI concept |
 | **`CHECK_IN_OUT`** | `Stay_ID (PK)`, `Booking_ID (FK)`, `Actual_CheckIn`, `Actual_CheckOut` | Quick Check-in & Departure folios on [`dashboard.html`](dashboard.html) and [`bookings.html`](bookings.html) | UI concept |
-| **`PAYMENT`** | `Payment_ID (PK)`, `Booking_ID (FK)`, `Amount`, `Payment_Date`, `Payment_Method`, optional demo reference | Invoice payments include clearly marked simulated guest checkouts | Implemented |
+| **`PAYMENT`** | `Payment_ID (PK)`, `Booking_ID (FK)`, `Amount`, `Payment_Date`, `Payment_Method`, optional no-charge reference | Guest checkout completion is recorded without transferring money | Implemented |
 | **`INVOICE`** | `Invoice_ID (PK)`, `Booking_ID (FK)`, `Room_Charges`, `Tax_Amount`, `Discount`, `Total_Amount` | Invoice module stores totals and payment status | UI concept |
 | **`STAFF`** | `Staff_ID (PK)`, `First_Name`, `Phone`, `Department_ID (FK)`, `Job_Role_ID` | Staff directory; login accounts and app roles are configured separately in backend `.env` | UI concept |
 | **`DEPARTMENT`** | `Department_ID (PK)`, `Department_Name`, `Description` | Front Office, Accounts, Food & Beverage | UI concept |
@@ -333,7 +333,7 @@ The backend authenticates accounts configured in `.env`, checks the role selecte
 
 | Login role | Frontend modules available |
 | :--- | :--- |
-| Hotel Manager | Dashboard, rooms, reservations, guests, staff, invoices, food, services, and reviews |
+| Hotel Manager | Dashboard, rooms, reservations, guests, staff, invoices, services, and reviews |
 | Front Desk | Dashboard, Room Status, Reservations, Guest Directory, Hotel Services |
 | Accounts Cashier | Dashboard, Room Status, Reservations, Guest Directory, Invoices, Hotel Services |
 

@@ -44,9 +44,12 @@ function renderInvoicesTable() {
       <td>₹${Number(invoice.cgst || 0).toLocaleString('en-IN')}</td>
       <td>₹${Number(invoice.sgst || 0).toLocaleString('en-IN')}</td>
       <td><strong>₹${Number(invoice.total).toLocaleString('en-IN')}</strong></td>
-      <td><span class="status-badge ${String(invoice.status).toLowerCase().replace(/\s+/g, '-')}">${invoice.status}</span></td>
+      <td>
+        <span class="status-badge ${String(invoice.status).toLowerCase().replace(/\s+/g, '-')}">${invoice.paymentNote ? 'Payment complete' : escapeHtml(invoice.status)}</span>
+        ${invoice.paymentNote ? `<div class="payment-note">${escapeHtml(invoice.paymentNote)}</div>` : ''}
+      </td>
       <td>${invoice.status === 'Paid'
-    ? invoice.paymentMethod || 'Paid'
+    ? escapeHtml(invoice.paymentMethod || 'Paid')
     : renderActionMenu(invoice.invoiceId, [{ action: 'pay', label: 'Record payment' }])}</td>
     </tr>
     ${invoice.lines && invoice.lines.length ? `

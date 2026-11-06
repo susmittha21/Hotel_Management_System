@@ -321,7 +321,18 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                            WHERE i.booking_id=b.booking_id AND i.invoice_status='Partially Paid'
                        ) THEN 'Partially Paid'
                        ELSE 'Pending'
-                   END AS payment_status
+                   END AS payment_status,
+                   CASE
+                       WHEN EXISTS (
+                           SELECT 1 FROM "{schema}".payment p
+                           JOIN "{schema}".invoice i ON i.invoice_id=p.invoice_id
+                           WHERE i.booking_id=b.booking_id
+                             AND p.payment_status='Completed'
+                             AND (p.payment_reference LIKE 'NOCHARGE-%'
+                                  OR p.payment_reference LIKE 'DEMO-%')
+                       ) THEN 'No money was charged.'
+                       ELSE NULL
+                   END AS payment_note
             FROM "{schema}".booking b
             JOIN "{schema}".guest g ON g.guest_id = b.guest_id
             JOIN "{schema}".room r ON r.room_id = b.room_id
@@ -357,16 +368,18 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
             SELECT i.invoice_id, i.booking_id, g.first_name || ' ' || g.last_name AS guest_name,
                    r.room_number, i.room_charges, i.service_charges, i.tax_amount,
                    i.cgst_amount, i.sgst_amount, i.discount, i.total_amount,
-                   i.invoice_status, p.payment_method_display AS payment_method, p.payment_date
+                   i.invoice_status, p.payment_method, p.payment_date,
+                   p.payment_note
             FROM "{schema}".invoice i
             LEFT JOIN "{schema}".booking b ON b.booking_id = i.booking_id
             LEFT JOIN "{schema}".guest g ON g.guest_id = b.guest_id
             LEFT JOIN "{schema}".room r ON r.room_id = b.room_id
             LEFT JOIN LATERAL (
                 SELECT payment_method, payment_date,
-                       CASE WHEN payment_reference LIKE 'DEMO-%'
-                            THEN payment_method || ' (Demo)'
-                            ELSE payment_method END AS payment_method_display
+                       CASE WHEN payment_reference LIKE 'NOCHARGE-%'
+                                  OR payment_reference LIKE 'DEMO-%'
+                            THEN 'No money was charged.'
+                            ELSE NULL END AS payment_note
                 FROM "{schema}".payment
                 WHERE invoice_id=i.invoice_id AND payment_status='Completed'
                 ORDER BY payment_date DESC LIMIT 1
@@ -486,6 +499,7 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "invoiceId": row["invoice_id"],
                     "paidAmount": row["invoice_total"] if row["payment_status"] == "Paid" else None,
                     "paymentStatus": row["payment_status"],
+                    "paymentNote": row["payment_note"],
                 }
             )
             for row in bookings
@@ -530,7 +544,8 @@ def read_collections(connection: Connection, schema: str) -> dict[str, list[dict
                     "cgst": row["cgst_amount"],
                     "sgst": row["sgst_amount"],
                     "status": "Pending" if row["invoice_status"] == "Unpaid" else row["invoice_status"],
-                    "paymentMethod": row["payment_method_display"],
+                    "paymentMethod": row["payment_method"],
+                    "paymentNote": row["payment_note"],
                     "paymentDate": row["payment_date"],
                     "lines": lines_by_invoice.get(row["invoice_id"], []),
                 }
@@ -867,7 +882,7 @@ def settle_invoice(
     invoice_id: str,
     payment_method: str,
     *,
-    simulated: bool = False,
+    no_charge: bool = False,
 ) -> str:
     invoice = connection.execute(
         text(
@@ -896,7 +911,7 @@ def settle_invoice(
             "booking_id": invoice["booking_id"],
             "amount": invoice["total_amount"],
             "method": payment_method,
-            "payment_reference": f"DEMO-{payment_id}" if simulated else None,
+            "payment_reference": f"NOCHARGE-{payment_id}" if no_charge else None,
         },
     )
     connection.execute(
@@ -923,7 +938,10 @@ def dashboard_analytics(connection: Connection, schema: str) -> dict[str, Any]:
                    ) AS departures_today,
                    (
                        SELECT COALESCE(SUM(amount), 0) FROM "{schema}".payment
-                       WHERE payment_status='Completed' AND payment_date::date=CURRENT_DATE
+                       WHERE payment_status='Completed'
+                         AND payment_date::date=CURRENT_DATE
+                         AND COALESCE(payment_reference, '') NOT LIKE 'NOCHARGE-%'
+                         AND COALESCE(payment_reference, '') NOT LIKE 'DEMO-%'
                    ) AS revenue_today
             FROM "{schema}".room
             """
@@ -1518,8 +1536,8 @@ def _save_invoices(connection: Connection, schema: str, records: list[dict[str, 
             )
         if database_status == "Paid":
             displayed_method = record.get("paymentMethod")
-            simulated = isinstance(displayed_method, str) and displayed_method.endswith(" (Demo)")
-            method = displayed_method.removesuffix(" (Demo)") if simulated else displayed_method
+            no_charge = record.get("paymentNote") == "No money was charged."
+            method = displayed_method
             valid_methods = {"Cash", "Credit Card", "Debit Card", "UPI", "Net Banking"}
             if method not in valid_methods:
                 raise ValueError(f"A valid payment method is required to settle invoice {invoice_id}.")
@@ -1530,7 +1548,7 @@ def _save_invoices(connection: Connection, schema: str, records: list[dict[str, 
                 "booking_id": values["booking_id"],
                 "amount": values["total"],
                 "method": method,
-                "payment_reference": f"DEMO-{payment_id}" if simulated else None,
+                "payment_reference": f"NOCHARGE-{payment_id}" if no_charge else None,
             }
             connection.execute(
                 text(

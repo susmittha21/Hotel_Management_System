@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="../css/style.css">
   <style>
     body {
-      background: #edf2f7;
+      background: #f3f5f2;
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -64,7 +64,7 @@
 
   </style>
 </head>
-<body>
+<body class="login-page">
 
   <div class="login-card">
     <div class="login-header">
@@ -100,7 +100,12 @@
 
         <div class="form-group" style="margin-bottom: 16px;">
           <label class="form-label" for="password">Password</label>
-          <input type="password" id="password" class="form-control" placeholder="Enter password" required autocomplete="current-password">
+          <div class="password-input-wrap">
+            <input type="password" id="password" class="form-control" placeholder="Enter password" required autocomplete="current-password">
+            <button class="password-visibility-toggle" type="button" data-password-toggle="password" aria-label="Show password" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
         </div>
 
         <button type="submit" class="btn btn-primary" style="width: 100%; padding: 8px;">

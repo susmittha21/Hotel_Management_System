@@ -106,7 +106,7 @@ function renderBookingsTable(searchQuery = '') {
           <div style="font-size:0.75rem; color:var(--text-muted);">Out: ${escapeHtml(b.checkOut)}</div>
         </td>
         <td>${b.guestsCount || 1} Person(s)</td>
-        <td><strong>₹${Number(b.totalAmount).toLocaleString('en-IN')}</strong> <span style="font-size:0.72rem; color:${b.paymentStatus === 'Paid' ? '#15803d' : '#b45309'};">(${b.paymentStatus || 'Pending'})</span></td>
+        <td><strong>₹${Number(b.totalAmount).toLocaleString('en-IN')}</strong> <span style="font-size:0.72rem; color:${b.paymentStatus === 'Paid' ? '#15803d' : '#b45309'};">(${b.paymentNote ? 'Payment complete' : b.paymentStatus || 'Pending'})</span>${b.paymentNote ? `<div style="font-size:0.7rem;color:var(--text-muted);">${escapeHtml(b.paymentNote)}</div>` : ''}</td>
         <td><span class="badge ${statusClass}">${escapeHtml(b.status)}</span></td>
         <td>${renderActionMenu(b.bookingId, actions)}</td>
       </tr>

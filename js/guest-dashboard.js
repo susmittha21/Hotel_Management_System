@@ -1,7 +1,9 @@
 let guestAccount = null;
 let guestAvailableRooms = [];
+let guestUpiScanConfirmed = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
+  setGuestAccountReady(false);
   setupGuestBooking();
   setupGuestServiceRequest();
   setupGuestReview();
@@ -10,6 +12,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   try {
     guestAccount = await apiRequest('/guest/account');
+    setGuestAccountReady(true);
     document.getElementById('guestWelcome').textContent =
       `Hello, ${guestAccount.guest.firstName} ${guestAccount.guest.lastName}`;
     renderGuestBookings();
@@ -20,10 +23,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     populateServiceBookingOptions();
   } catch (error) {
     console.error('Unable to load guest account data.', error);
-    showGuestMessage('guestBookingMessage', error.message, 'error');
+    showGuestMessage(
+      'guestBookingMessage',
+      'We could not load your guest account, so reservations are paused. Check that the hotel API and database are running, then refresh or sign in again.',
+      'error'
+    );
   }
   initializeGuestBookingDates();
 });
+
+function setGuestAccountReady(ready) {
+  const form = document.getElementById('guestBookingForm');
+  if (!form) return;
+  ['guestCheckIn', 'guestCheckOut', 'guestCount', 'guestBookingNotes', 'guestCheckAvailability']
+    .forEach(id => { document.getElementById(id).disabled = !ready; });
+  if (!ready) {
+    document.getElementById('guestAvailableRooms').disabled = true;
+    document.getElementById('guestPaymentMethod').disabled = true;
+    document.getElementById('guestReserveButton').disabled = true;
+  }
+}
 
 function showGuestMessage(elementId, text, kind = '') {
   const message = document.getElementById(elementId);
@@ -58,9 +77,22 @@ function initializeGuestBookingDates() {
 function setupGuestBooking() {
   document.getElementById('guestCheckAvailability').addEventListener('click', loadGuestAvailability);
   document.getElementById('guestAvailableRooms').addEventListener('change', event => {
+    guestUpiScanConfirmed = false;
+    document.getElementById('guestUpiScanConfirm').disabled = false;
+    document.getElementById('guestUpiScanStatus').textContent = '';
     updateGuestPaymentQuote(event.target.value);
   });
   document.getElementById('guestPaymentMethod').addEventListener('change', () => {
+    guestUpiScanConfirmed = false;
+    document.getElementById('guestUpiScanConfirm').disabled = false;
+    document.getElementById('guestUpiScanStatus').textContent = '';
+    updateGuestPaymentQuote(document.getElementById('guestAvailableRooms').value);
+  });
+  document.getElementById('guestUpiScanConfirm').addEventListener('click', () => {
+    if (document.getElementById('guestPaymentMethod').value !== 'UPI') return;
+    guestUpiScanConfirmed = true;
+    document.getElementById('guestUpiScanConfirm').disabled = true;
+    document.getElementById('guestUpiScanStatus').textContent = 'Scan acknowledged. You can now complete the no-charge reservation.';
     updateGuestPaymentQuote(document.getElementById('guestAvailableRooms').value);
   });
   document.getElementById('guestBookingForm').addEventListener('submit', async event => {
@@ -71,12 +103,16 @@ function setupGuestBooking() {
     const selectedRoom = guestAvailableRooms.find(room => room.roomNo === roomNo);
     const paymentMethod = document.getElementById('guestPaymentMethod').value;
     if (!selectedRoom || !['UPI', 'Credit Card', 'Net Banking'].includes(paymentMethod)) {
-      showGuestMessage('guestBookingMessage', 'Check availability, select a room, and choose a demo payment option.', 'error');
+      showGuestMessage('guestBookingMessage', 'Check availability, select a room, and choose a payment option.', 'error');
+      return;
+    }
+    if (paymentMethod === 'UPI' && !guestUpiScanConfirmed) {
+      showGuestMessage('guestBookingMessage', 'Scan the no-charge QR and confirm the scan before completing the reservation.', 'error');
       return;
     }
     const submit = document.getElementById('guestReserveButton');
     submit.disabled = true;
-    showGuestMessage('guestBookingMessage', 'Processing the demo payment…');
+    showGuestMessage('guestBookingMessage', 'Completing payment…');
     try {
       const booking = await apiRequest('/guest/bookings', {
         method: 'POST',
@@ -86,7 +122,8 @@ function setupGuestBooking() {
           checkOut: document.getElementById('guestCheckOut').value,
           guestsCount: Number(document.getElementById('guestCount').value),
           specialRequests: document.getElementById('guestBookingNotes').value.trim() || null,
-          paymentMethod
+          paymentMethod,
+          upiScanConfirmed: paymentMethod === 'UPI' && guestUpiScanConfirmed
         })
       });
       guestAccount.bookings.unshift(booking);
@@ -96,10 +133,10 @@ function setupGuestBooking() {
       clearGuestAvailability();
       showGuestMessage(
         'guestBookingMessage',
-        `Reservation ${booking.bookingId} is confirmed. Demo payment of ${formatGuestMoney(booking.paidAmount)} was recorded. Invoice ${booking.invoiceId}; transaction ${booking.paymentTransactionId}.`,
+        `Reservation ${booking.bookingId} is confirmed. Payment complete for ${formatGuestMoney(booking.paidAmount)}; no money was charged. Invoice ${booking.invoiceId}; transaction ${booking.paymentTransactionId}.`,
         'success'
       );
-      notifyMongoSyncStatus(booking.mongoSynced, 'Reservation, paid invoice, and simulated demo payment saved in PostgreSQL.');
+      notifyMongoSyncStatus(booking.mongoSynced, 'Reservation and payment completion recorded in PostgreSQL; no money was charged.');
     } catch (error) {
       showGuestMessage('guestBookingMessage', error.message, 'error');
     } finally {
@@ -146,12 +183,13 @@ async function loadGuestAvailability() {
   } catch (error) {
     showGuestMessage('guestBookingMessage', error.message, 'error');
   } finally {
-    checkButton.disabled = false;
+    checkButton.disabled = !guestAccount;
   }
 }
 
 function clearGuestAvailability() {
   guestAvailableRooms = [];
+  guestUpiScanConfirmed = false;
   const roomSelect = document.getElementById('guestAvailableRooms');
   roomSelect.replaceChildren(new Option('Check availability to choose a room', ''));
   roomSelect.disabled = true;
@@ -160,6 +198,13 @@ function clearGuestAvailability() {
   paymentMethod.disabled = true;
   document.getElementById('guestPaymentSummary').textContent =
     'Check availability and select a room to see the total.';
+  document.getElementById('guestUpiQrPanel').hidden = true;
+  const qrImage = document.getElementById('guestUpiQrImage');
+  qrImage.removeAttribute('src');
+  delete qrImage.dataset.roomNo;
+  delete qrImage.dataset.total;
+  document.getElementById('guestUpiScanConfirm').disabled = false;
+  document.getElementById('guestUpiScanStatus').textContent = '';
   const submit = document.getElementById('guestReserveButton');
   submit.disabled = true;
   submit.textContent = 'Pay & Confirm Reservation';
@@ -170,19 +215,54 @@ function updateGuestPaymentQuote(roomNo) {
   const paymentMethod = document.getElementById('guestPaymentMethod');
   const paymentSummary = document.getElementById('guestPaymentSummary');
   const submit = document.getElementById('guestReserveButton');
+  const qrPanel = document.getElementById('guestUpiQrPanel');
   paymentMethod.disabled = !room;
   if (!room) {
     paymentSummary.textContent = 'Select an available room to see the total.';
+    qrPanel.hidden = true;
     submit.disabled = true;
     submit.textContent = 'Pay & Confirm Reservation';
     return;
   }
-  paymentSummary.textContent =
-    `${room.nights} night(s): ${formatGuestMoney(room.subtotal)} + tax ${formatGuestMoney(room.taxAmount)} = ${formatGuestMoney(room.totalAmount)}. This demo checkout records the payment and confirms your reservation.`;
-  submit.disabled = !paymentMethod.value;
+  const isUpi = paymentMethod.value === 'UPI';
+  paymentSummary.textContent = isUpi
+    ? `${room.nights} night(s): ${formatGuestMoney(room.subtotal)} + tax ${formatGuestMoney(room.taxAmount)} = ${formatGuestMoney(room.totalAmount)}. Scan the no-charge QR, then confirm the scan to continue. No money will be charged.`
+    : `${room.nights} night(s): ${formatGuestMoney(room.subtotal)} + tax ${formatGuestMoney(room.taxAmount)} = ${formatGuestMoney(room.totalAmount)}. Payment completion confirms your reservation; no money will be charged.`;
+  qrPanel.hidden = !isUpi;
+  if (isUpi) renderGuestUpiQr(room);
+  submit.disabled = !paymentMethod.value || (isUpi && !guestUpiScanConfirmed);
   submit.textContent = paymentMethod.value
     ? `Pay ${formatGuestMoney(room.totalAmount)} & Confirm Reservation`
     : 'Pay & Confirm Reservation';
+}
+
+function renderGuestUpiQr(room) {
+  const image = document.getElementById('guestUpiQrImage');
+  const confirmButton = document.getElementById('guestUpiScanConfirm');
+  if (image.dataset.roomNo === room.roomNo && image.dataset.total === String(room.totalAmount) && image.src) {
+    confirmButton.disabled = guestUpiScanConfirmed;
+    return;
+  }
+  confirmButton.disabled = true;
+  image.dataset.roomNo = room.roomNo;
+  image.dataset.total = String(room.totalAmount);
+  try {
+    if (typeof qrcode !== 'function') throw new Error('QR code generator is unavailable.');
+    const qr = qrcode(0, 'M');
+    qr.addData(
+      `VS PLAZA NO-CHARGE UPI SCAN SIMULATION | Room ${room.roomNo} | ` +
+      `${room.nights} night(s) | INR ${Number(room.totalAmount).toFixed(2)} | No money transfer`
+    );
+    qr.make();
+    image.src = qr.createDataURL(5, 4);
+    confirmButton.disabled = false;
+  } catch (error) {
+    console.error('Unable to render the no-charge UPI QR code.', error);
+    image.removeAttribute('src');
+    delete image.dataset.roomNo;
+    delete image.dataset.total;
+    showGuestMessage('guestBookingMessage', 'The no-charge UPI QR could not be generated. Refresh the page and try again.', 'error');
+  }
 }
 
 function formatGuestMoney(amount) {
@@ -203,7 +283,9 @@ function renderGuestBookings() {
       <td>${escapeHtml(booking.checkIn)} – ${escapeHtml(booking.checkOut)}</td>
       <td>${escapeHtml(booking.guestsCount)}</td>
       <td>${escapeHtml(booking.status)}</td>
-      <td>${escapeHtml(booking.paymentStatus || 'Pending')}</td>
+      <td>${booking.paymentStatus === 'Paid'
+    ? 'Payment complete · No money charged'
+    : escapeHtml(booking.paymentStatus || 'Pending')}</td>
       <td>${booking.paidAmount == null ? '—' : escapeHtml(formatGuestMoney(booking.paidAmount))}</td>
       <td>${escapeHtml(booking.invoiceId || '—')}</td>
     </tr>

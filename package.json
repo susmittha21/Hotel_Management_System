@@ -7,5 +7,8 @@
     "dev": "npx.cmd -y serve . -l 3000",
     "start": "npx.cmd -y serve . -l 3000",
     "serve": "npx.cmd -y serve . -l 3000"
+  },
+  "dependencies": {
+    "qrcode-generator": "^2.0.4"
   }
 }

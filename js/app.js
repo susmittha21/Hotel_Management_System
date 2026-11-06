@@ -45,7 +45,7 @@ const DEFAULT_SERVICES = [
 const DEFAULT_REVIEWS = [];
 
 const ROLE_MODULES = {
-  'Hotel Manager': ['dashboard', 'rooms', 'bookings', 'guests', 'staff', 'invoices', 'food', 'services', 'reviews'],
+  'Hotel Manager': ['dashboard', 'rooms', 'bookings', 'guests', 'staff', 'invoices', 'services', 'reviews'],
   'Front Desk': ['dashboard', 'rooms', 'bookings', 'guests', 'services'],
   'Accounts Cashier': ['dashboard', 'rooms', 'bookings', 'guests', 'invoices', 'services'],
   'Guest': ['guest-dashboard']
@@ -573,6 +573,20 @@ function bindActionMenu(tableBody, handler) {
 
 // Global initialization for live clock and common triggers
 document.addEventListener('DOMContentLoaded', async () => {
+  document.querySelectorAll('[data-password-toggle]').forEach(button => {
+    const input = document.getElementById(button.dataset.passwordToggle);
+    if (!input) return;
+    button.addEventListener('click', () => {
+      const isVisible = input.type === 'text';
+      input.type = isVisible ? 'password' : 'text';
+      button.setAttribute('aria-pressed', String(!isVisible));
+      button.setAttribute('aria-label', isVisible ? 'Show password' : 'Hide password');
+      button.innerHTML = isVisible
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 5.2A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a14.8 14.8 0 0 1-3.1 3.8M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10.5 10.5 0 0 0 4.1-.8"></path></svg>';
+    });
+  });
+
   const pageName = window.location.pathname.split('/').pop().replace(/\.html$/, '');
   if (pageName && !['login', 'index', 'guest-account'].includes(pageName)) {
     let auth;

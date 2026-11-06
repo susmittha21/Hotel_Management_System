@@ -67,7 +67,7 @@ DATA_COLLECTIONS = {
 ROLE_MODULES = {
     "Hotel Manager": {
         "dashboard", "rooms", "bookings", "guests", "staff", "invoices",
-        "food", "services", "reviews",
+        "services", "reviews",
     },
     "Front Desk": {"dashboard", "rooms", "bookings", "guests", "services"},
     "Accounts Cashier": {"dashboard", "rooms", "bookings", "guests", "invoices", "services"},
@@ -137,6 +137,7 @@ class GuestBookingRequest(BaseModel):
     guestsCount: int = Field(ge=1, le=8)
     specialRequests: str | None = Field(default=None, max_length=1000)
     paymentMethod: Literal["UPI", "Credit Card", "Net Banking"]
+    upiScanConfirmed: bool = False
 
     @field_validator("roomNo")
     @classmethod
@@ -379,6 +380,7 @@ def mongo_dashboard_analytics(collections: dict[str, list[dict[str, Any]]]) -> d
         float(invoice.get("total", 0))
         for invoice in collections["invoices"]
         if invoice.get("status") == "Paid"
+        and not invoice.get("paymentNote")
         and str(invoice.get("paymentDate", "")).startswith(today)
     )
     return {
@@ -828,6 +830,8 @@ def create_guest_booking(
 ):
     _verify_origin(request)
     _require_role(user, {"Guest"})
+    if payload.paymentMethod == "UPI" and not payload.upiScanConfirmed:
+        raise HTTPException(status_code=422, detail="Scan the no-charge UPI QR and confirm the scan before completing the reservation.")
     if payload.checkIn < date.today() or payload.checkOut <= payload.checkIn:
         raise HTTPException(status_code=422, detail="Choose a future check-in date and a later check-out date.")
     try:
@@ -859,11 +863,12 @@ def create_guest_booking(
                     schema,
                     invoice["invoiceId"],
                     payload.paymentMethod,
-                    simulated=True,
+                    no_charge=True,
                 )
             booking["paymentStatus"] = "Paid"
             booking["invoiceId"] = invoice["invoiceId"]
-            booking["paymentMethod"] = f"{payload.paymentMethod} (Demo)"
+            booking["paymentMethod"] = payload.paymentMethod
+            booking["paymentNote"] = "No money was charged."
             booking["paymentTransactionId"] = payment_transaction_id
             booking["paidAmount"] = invoice["total"]
             booking["mongoSynced"] = try_synchronize_mongo(schema)
