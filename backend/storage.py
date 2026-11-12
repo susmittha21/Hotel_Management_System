@@ -115,6 +115,8 @@ def ensure_extension_tables(connection: Connection, schema: str) -> None:
         f'ALTER TABLE "{schema}".payment ADD COLUMN IF NOT EXISTS invoice_id VARCHAR(20) '
         f'REFERENCES "{schema}".invoice(invoice_id) ON DELETE RESTRICT',
         f'ALTER TABLE "{schema}".payment ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(40)',
+        f'CREATE UNIQUE INDEX IF NOT EXISTS payment_razorpay_reference_uq '
+        f'ON "{schema}".payment (payment_reference) WHERE payment_reference LIKE \'RAZORPAY-TEST-%\'',
         f'ALTER TABLE "{schema}".invoice ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC(10, 2) NOT NULL DEFAULT 0',
         f'ALTER TABLE "{schema}".invoice ADD COLUMN IF NOT EXISTS sgst_amount NUMERIC(10, 2) NOT NULL DEFAULT 0',
         f'DROP INDEX IF EXISTS "{schema}".payment_invoice_id_uq',

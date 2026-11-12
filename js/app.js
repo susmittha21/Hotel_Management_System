@@ -58,7 +58,10 @@ const ROLE_HOME_MODULE = {
   'Guest': 'guest-dashboard'
 };
 
-const API_BASE_URL = (window.HOTEL_API_BASE_URL || 'http://localhost:8000/api').replace(/\/+$/, '');
+const defaultApiUrl = new URL(window.location.origin);
+defaultApiUrl.port = '8000';
+defaultApiUrl.pathname = '/api';
+const API_BASE_URL = (window.HOTEL_API_BASE_URL || defaultApiUrl.href).replace(/\/+$/, '');
 const DATA_COLLECTIONS = {
   [STORAGE_KEYS.ROOMS]: 'rooms',
   [STORAGE_KEYS.GUESTS]: 'guests',

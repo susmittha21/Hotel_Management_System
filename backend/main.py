@@ -168,6 +168,10 @@ class GuestRazorpayOrderRequest(BaseModel):
         return value
 
 
+class GuestQrBookingRequest(GuestRazorpayOrderRequest):
+    qrCodeId: str = Field(min_length=8, max_length=50)
+
+
 class RazorpayGatewayError(RuntimeError):
     pass
 
@@ -223,6 +227,176 @@ def _verify_razorpay_signature(order_id: str, payment_id: str, signature: str) -
         hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(expected, signature)
+
+
+def _guest_booking_quote(
+    payload: GuestRazorpayOrderRequest,
+) -> tuple[int, Decimal, Decimal, Decimal, int]:
+    schema = database_settings()["schema"]
+    with _database_sync_lock:
+        ensure_database_schema(schema)
+        with get_engine().connect() as connection:
+            available = public_available_rooms(
+                connection,
+                schema,
+                payload.checkIn,
+                payload.checkOut,
+                payload.guestsCount,
+                payload.roomType,
+            )
+    if not available:
+        raise HTTPException(status_code=409, detail="No room of the selected type is available for those dates.")
+    nights = (payload.checkOut - payload.checkIn).days
+    subtotal = Decimal(str(available[0]["price"])) * nights
+    gst = configured_gst_rate() / 100
+    half_tax = (subtotal * gst / 2).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    total = subtotal + half_tax * 2
+    amount_paise = int((total * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return nights, subtotal, half_tax, total, amount_paise
+
+
+def _guest_qr_notes(user: dict[str, str], payload: GuestRazorpayOrderRequest) -> dict[str, str]:
+    return {
+        "guest_id": user["guestId"],
+        "room_type": payload.roomType,
+        "check_in": payload.checkIn.isoformat(),
+        "check_out": payload.checkOut.isoformat(),
+        "guests_count": str(payload.guestsCount),
+    }
+
+
+def _get_guest_qr_code(qr_code_id: str, user: dict[str, str]) -> dict[str, Any]:
+    if not re.fullmatch(r"qr_[A-Za-z0-9]+", qr_code_id):
+        raise HTTPException(status_code=422, detail="Invalid Razorpay QR code.")
+    qr_code = _razorpay_request("GET", f"/payments/qr_codes/{qr_code_id}")
+    if (
+        qr_code.get("id") != qr_code_id
+        or qr_code.get("type") != "upi_qr"
+        or qr_code.get("usage") != "single_use"
+        or qr_code.get("fixed_amount") is not True
+        or not isinstance(qr_code.get("payment_amount"), int)
+        or not isinstance(qr_code.get("notes"), dict)
+        or qr_code["notes"].get("guest_id") != user["guestId"]
+    ):
+        raise HTTPException(status_code=404, detail="This payment QR is not available for your account.")
+    return qr_code
+
+
+def _guest_qr_payment(qr_code_id: str, amount_paise: int) -> dict[str, Any] | None:
+    result = _razorpay_request(
+        "GET",
+        f"/payments/qr_codes/{qr_code_id}/payments?count=100",
+    )
+    items = result.get("items")
+    if not isinstance(items, list):
+        raise RazorpayGatewayError("Razorpay returned an invalid QR payment list.")
+    captured_payments = [
+        payment for payment in items
+        if isinstance(payment, dict)
+        and payment.get("status") == "captured"
+        and payment.get("captured") is True
+    ]
+    if not captured_payments:
+        return None
+    if len(captured_payments) != 1:
+        raise HTTPException(status_code=409, detail="This QR has an unexpected number of payments; contact the hotel.")
+    payment = captured_payments[0]
+    if (
+        payment.get("currency") != "INR"
+        or payment.get("amount") != amount_paise
+        or payment.get("method") != "upi"
+        or not re.fullmatch(r"pay_[A-Za-z0-9]+", str(payment.get("id", "")))
+    ):
+        raise HTTPException(status_code=422, detail="Razorpay payment details do not match this reservation.")
+    return payment
+
+
+def _save_paid_guest_booking(
+    *,
+    guest_id: str,
+    room_type: str,
+    check_in: date,
+    check_out: date,
+    guests_count: int,
+    special_requests: str | None,
+    amount_paise: int,
+    payment_method: str,
+    payment_reference: str,
+    payment_note: str,
+) -> dict[str, Any]:
+    schema = database_settings()["schema"]
+    with _database_sync_lock:
+        ensure_database_schema(schema)
+        with get_engine().begin() as connection:
+            existing_payment = connection.execute(
+                text(
+                    f'SELECT payment_id, booking_id FROM "{schema}".payment '
+                    "WHERE payment_reference=:payment_reference"
+                ),
+                {"payment_reference": payment_reference},
+            ).mappings().one_or_none()
+            if existing_payment is not None:
+                existing_booking = next(
+                    (
+                        record
+                        for record in read_collections(connection, schema)["bookings"]
+                        if record["bookingId"] == existing_payment["booking_id"]
+                        and record["guestId"] == guest_id
+                    ),
+                    None,
+                )
+                if existing_booking is None:
+                    raise ValueError("This Razorpay payment has already been used.")
+                existing_booking["paymentStatus"] = "Paid"
+                existing_booking["paymentMethod"] = payment_method
+                existing_booking["paymentNote"] = payment_note
+                existing_booking["paymentTransactionId"] = existing_payment["payment_id"]
+                existing_booking.pop("roomNo", None)
+                existing_booking["mongoSynced"] = False
+                return existing_booking
+            booking = create_public_booking_for_type(
+                connection,
+                schema,
+                room_type=room_type,
+                guest_id=guest_id,
+                check_in=check_in,
+                check_out=check_out,
+                guests_count=guests_count,
+                special_requests=special_requests,
+                booking_source="Website",
+            )
+            invoice = create_invoice(
+                connection,
+                schema,
+                booking["bookingId"],
+                [],
+                [],
+                configured_gst_rate() / 100,
+            )
+            expected_amount = int(
+                (Decimal(str(invoice["total"])) * 100).quantize(
+                    Decimal("1"), rounding=ROUND_HALF_UP
+                )
+            )
+            if expected_amount != amount_paise:
+                raise ValueError("The room price changed after checkout started. Please check availability and try again.")
+            payment_transaction_id = settle_invoice(
+                connection,
+                schema,
+                invoice["invoiceId"],
+                payment_method,
+                no_charge=True,
+                payment_reference=payment_reference,
+            )
+    booking["paymentStatus"] = "Paid"
+    booking["invoiceId"] = invoice["invoiceId"]
+    booking["paymentMethod"] = payment_method
+    booking["paymentNote"] = payment_note
+    booking["paymentTransactionId"] = payment_transaction_id
+    booking["paidAmount"] = invoice["total"]
+    booking.pop("roomNo", None)
+    booking["mongoSynced"] = try_synchronize_mongo(schema)
+    return booking
 
 
 def _normalize_guest_email(value: str) -> str:
@@ -927,26 +1101,7 @@ def create_guest_razorpay_order(
     if payload.checkIn < date.today() or payload.checkOut <= payload.checkIn:
         raise HTTPException(status_code=422, detail="Choose a future check-in date and a later check-out date.")
     try:
-        schema = database_settings()["schema"]
-        with _database_sync_lock:
-            ensure_database_schema(schema)
-            with get_engine().connect() as connection:
-                available = public_available_rooms(
-                    connection,
-                    schema,
-                    payload.checkIn,
-                    payload.checkOut,
-                    payload.guestsCount,
-                    payload.roomType,
-                )
-        if not available:
-            raise HTTPException(status_code=409, detail="No room of the selected type is available for those dates.")
-        nights = (payload.checkOut - payload.checkIn).days
-        subtotal = Decimal(str(available[0]["price"])) * nights
-        gst = configured_gst_rate() / 100
-        half_tax = (subtotal * gst / 2).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        total = subtotal + half_tax * 2
-        amount_paise = int((total * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        nights, subtotal, half_tax, total, amount_paise = _guest_booking_quote(payload)
         order = _razorpay_request(
             "POST",
             "/orders",
@@ -986,6 +1141,178 @@ def create_guest_razorpay_order(
     except (SQLAlchemyError, RuntimeError, ValueError, KeyError):
         logger.exception("Unable to create a Razorpay test order")
         raise HTTPException(status_code=503, detail="Unable to start Razorpay checkout right now.") from None
+
+
+@app.post("/api/guest/razorpay/qr-codes")
+def create_guest_razorpay_qr_code(
+    payload: GuestRazorpayOrderRequest,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Guest"})
+    if payload.checkIn < date.today() or payload.checkOut <= payload.checkIn:
+        raise HTTPException(status_code=422, detail="Choose a future check-in date and a later check-out date.")
+    try:
+        nights, subtotal, half_tax, total, amount_paise = _guest_booking_quote(payload)
+        expires_at = int(time.time()) + 15 * 60
+        qr_code = _razorpay_request(
+            "POST",
+            "/payments/qr_codes",
+            {
+                "type": "upi_qr",
+                "name": "VS Plaza Guest Booking",
+                "usage": "single_use",
+                "fixed_amount": True,
+                "payment_amount": amount_paise,
+                "description": f"Guest booking: {payload.roomType}",
+                "close_by": expires_at,
+                "notes": _guest_qr_notes(user, payload),
+            },
+        )
+        image_url = qr_code.get("image_url")
+        qr_code_id = qr_code.get("id")
+        qr_expires_at = qr_code.get("close_by")
+        if (
+            not isinstance(qr_code_id, str)
+            or not re.fullmatch(r"qr_[A-Za-z0-9]+", qr_code_id)
+            or qr_code.get("type") != "upi_qr"
+            or qr_code.get("usage") != "single_use"
+            or qr_code.get("payment_amount") != amount_paise
+            or not isinstance(image_url, str)
+            or not image_url.startswith("https://")
+        ):
+            raise RazorpayGatewayError("Razorpay returned an invalid test QR code.")
+        if not isinstance(qr_expires_at, int):
+            qr_expires_at = expires_at
+        return {
+            "qrCodeId": qr_code_id,
+            "imageUrl": image_url,
+            "amount": amount_paise,
+            "currency": "INR",
+            "roomType": payload.roomType,
+            "nights": nights,
+            "subtotal": float(subtotal),
+            "taxAmount": float(half_tax * 2),
+            "totalAmount": float(total),
+            "expiresAt": qr_expires_at,
+            "paymentMode": "test",
+        }
+    except HTTPException:
+        raise
+    except RazorpayGatewayError as error:
+        logger.warning("Unable to create Razorpay test QR code: %s", error)
+        raise HTTPException(status_code=503, detail=str(error)) from None
+    except (SQLAlchemyError, RuntimeError, ValueError, KeyError):
+        logger.exception("Unable to create a Razorpay test QR code")
+        raise HTTPException(status_code=503, detail="Unable to create the Razorpay test QR right now.") from None
+
+
+@app.get("/api/guest/razorpay/qr-codes/{qr_code_id}")
+def get_guest_razorpay_qr_status(
+    qr_code_id: str,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Guest"})
+    try:
+        qr_code = _get_guest_qr_code(qr_code_id, user)
+        payment = _guest_qr_payment(qr_code_id, qr_code["payment_amount"])
+        if payment is not None:
+            return {"status": "paid"}
+        return {"status": "pending" if qr_code.get("status") == "active" else "expired"}
+    except HTTPException:
+        raise
+    except RazorpayGatewayError as error:
+        logger.warning("Unable to check Razorpay test QR status: %s", error)
+        raise HTTPException(status_code=503, detail=str(error)) from None
+    except (SQLAlchemyError, RuntimeError, ValueError, KeyError):
+        logger.exception("Unable to check a Razorpay test QR status")
+        raise HTTPException(status_code=503, detail="Unable to check the QR payment right now.") from None
+
+
+@app.post("/api/guest/razorpay/qr-codes/{qr_code_id}/close")
+def close_guest_razorpay_qr_code(
+    qr_code_id: str,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Guest"})
+    try:
+        qr_code = _get_guest_qr_code(qr_code_id, user)
+        if _guest_qr_payment(qr_code_id, qr_code["payment_amount"]) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Payment was already received. Keep this page open while the reservation is verified.",
+            )
+        if qr_code.get("status") == "active":
+            _razorpay_request("POST", f"/payments/qr_codes/{qr_code_id}/close")
+            if _guest_qr_payment(qr_code_id, qr_code["payment_amount"]) is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Payment was received while the QR was closing. Keep this page open for verification.",
+                )
+        return {"status": "closed"}
+    except HTTPException:
+        raise
+    except RazorpayGatewayError as error:
+        logger.warning("Unable to close Razorpay test QR code: %s", error)
+        raise HTTPException(status_code=503, detail=str(error)) from None
+    except (SQLAlchemyError, RuntimeError, ValueError, KeyError):
+        logger.exception("Unable to close a Razorpay test QR code")
+        raise HTTPException(status_code=503, detail="Unable to cancel the QR payment right now.") from None
+
+
+@app.post("/api/guest/bookings/qr", status_code=201)
+def create_guest_booking_from_qr(
+    payload: GuestQrBookingRequest,
+    request: Request,
+    user: dict[str, str] = Depends(current_user),
+):
+    _verify_origin(request)
+    _require_role(user, {"Guest"})
+    if payload.checkIn < date.today() or payload.checkOut <= payload.checkIn:
+        raise HTTPException(status_code=422, detail="Choose a future check-in date and a later check-out date.")
+    try:
+        qr_code = _get_guest_qr_code(payload.qrCodeId, user)
+        if qr_code.get("notes") != _guest_qr_notes(user, payload):
+            raise HTTPException(status_code=422, detail="This Razorpay QR code does not match your reservation.")
+        _, _, _, _, expected_amount = _guest_booking_quote(payload)
+        if qr_code["payment_amount"] != expected_amount:
+            raise HTTPException(
+                status_code=409,
+                detail="The room price changed after this QR was created. Please contact the hotel to resolve the payment.",
+            )
+        payment = _guest_qr_payment(payload.qrCodeId, expected_amount)
+        if payment is None:
+            raise HTTPException(status_code=409, detail="Razorpay has not confirmed this QR payment yet.")
+        return _save_paid_guest_booking(
+            guest_id=user["guestId"],
+            room_type=payload.roomType,
+            check_in=payload.checkIn,
+            check_out=payload.checkOut,
+            guests_count=payload.guestsCount,
+            special_requests=payload.specialRequests,
+            amount_paise=payment["amount"],
+            payment_method="UPI",
+            payment_reference=f"RAZORPAY-TEST-{payment['id']}",
+            payment_note="Razorpay test QR payment. No money was charged.",
+        )
+    except HTTPException:
+        raise
+    except RazorpayGatewayError as error:
+        logger.warning("Unable to verify Razorpay test QR payment: %s", error)
+        raise HTTPException(status_code=503, detail=str(error)) from None
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except IntegrityError:
+        logger.exception("PostgreSQL constraint rejected a Razorpay QR booking")
+        raise HTTPException(status_code=409, detail="This QR payment has already been used or the room is no longer available.") from None
+    except (SQLAlchemyError, RuntimeError):
+        logger.exception("Unable to save a Razorpay QR booking")
+        raise HTTPException(status_code=503, detail="Unable to save your reservation right now.") from None
 
 
 @app.post("/api/guest/bookings", status_code=201)
@@ -1043,53 +1370,18 @@ def create_guest_booking(
         if payment_method is None:
             raise HTTPException(status_code=422, detail="This Razorpay payment method is not supported.")
 
-        schema = database_settings()["schema"]
-        with _database_sync_lock:
-            ensure_database_schema(schema)
-            with get_engine().begin() as connection:
-                booking = create_public_booking_for_type(
-                    connection,
-                    schema,
-                    room_type=payload.roomType,
-                    guest_id=user["guestId"],
-                    check_in=payload.checkIn,
-                    check_out=payload.checkOut,
-                    guests_count=payload.guestsCount,
-                    special_requests=payload.specialRequests,
-                    booking_source="Website",
-                )
-                invoice = create_invoice(
-                    connection,
-                    schema,
-                    booking["bookingId"],
-                    [],
-                    [],
-                    configured_gst_rate() / 100,
-                )
-                expected_amount = int(
-                    (Decimal(str(invoice["total"])) * 100).quantize(
-                        Decimal("1"), rounding=ROUND_HALF_UP
-                    )
-                )
-                if expected_amount != order["amount"]:
-                    raise ValueError("The room price changed after checkout started. Please check availability and try again.")
-                payment_transaction_id = settle_invoice(
-                    connection,
-                    schema,
-                    invoice["invoiceId"],
-                    payment_method,
-                    no_charge=True,
-                    payment_reference=f"RAZORPAY-TEST-{payload.razorpayPaymentId}",
-                )
-            booking["paymentStatus"] = "Paid"
-            booking["invoiceId"] = invoice["invoiceId"]
-            booking["paymentMethod"] = payment_method
-            booking["paymentNote"] = "Razorpay test payment. No money was charged."
-            booking["paymentTransactionId"] = payment_transaction_id
-            booking["paidAmount"] = invoice["total"]
-            booking.pop("roomNo", None)
-            booking["mongoSynced"] = try_synchronize_mongo(schema)
-        return booking
+        return _save_paid_guest_booking(
+            guest_id=user["guestId"],
+            room_type=payload.roomType,
+            check_in=payload.checkIn,
+            check_out=payload.checkOut,
+            guests_count=payload.guestsCount,
+            special_requests=payload.specialRequests,
+            amount_paise=order["amount"],
+            payment_method=payment_method,
+            payment_reference=f"RAZORPAY-TEST-{payload.razorpayPaymentId}",
+            payment_note="Razorpay test payment. No money was charged.",
+        )
     except HTTPException:
         raise
     except RazorpayGatewayError as error:
@@ -1099,7 +1391,10 @@ def create_guest_booking(
         raise HTTPException(status_code=409, detail=str(error)) from None
     except IntegrityError:
         logger.exception("PostgreSQL constraint rejected a public room booking")
-        raise HTTPException(status_code=409, detail="Unable to reserve the selected room. Please try another room.") from None
+        raise HTTPException(
+            status_code=409,
+            detail="This payment has already been used or the selected room is no longer available.",
+        ) from None
     except (SQLAlchemyError, RuntimeError):
         logger.exception("Unable to save a public room booking")
         raise HTTPException(status_code=503, detail="Unable to save your reservation right now.") from None

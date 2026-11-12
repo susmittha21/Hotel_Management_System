@@ -1,5 +1,7 @@
 let guestAccount = null;
 let guestAvailableRooms = [];
+let activeGuestQrPayment = null;
+let guestQrPaymentInProgress = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
   setGuestAccountReady(false);
@@ -36,6 +38,7 @@ function setGuestAccountReady(ready) {
   if (!form) return;
   ['guestCheckIn', 'guestCheckOut', 'guestCount', 'guestBookingNotes', 'guestCheckAvailability']
     .forEach(id => { document.getElementById(id).disabled = !ready; });
+  document.getElementById('guestQrPayButton').disabled = !ready || !document.getElementById('guestAvailableRooms').value;
   if (!ready) {
     document.getElementById('guestAvailableRooms').disabled = true;
     document.getElementById('guestReserveButton').disabled = true;
@@ -74,6 +77,13 @@ function initializeGuestBookingDates() {
 
 function setupGuestBooking() {
   document.getElementById('guestCheckAvailability').addEventListener('click', loadGuestAvailability);
+  document.getElementById('guestQrPayButton').addEventListener('click', startGuestQrPayment);
+  document.getElementById('guestQrCancelButton').addEventListener('click', cancelGuestQrPayment);
+  document.getElementById('guestQrRetryButton').addEventListener('click', () => {
+    if (activeGuestQrPayment?.paymentDetected) {
+      confirmGuestQrBooking(activeGuestQrPayment);
+    }
+  });
   document.getElementById('guestAvailableRooms').addEventListener('change', event => {
     updateGuestPaymentQuote(event.target.value);
   });
@@ -91,17 +101,10 @@ function setupGuestBooking() {
       showGuestMessage('guestBookingMessage', 'Razorpay Checkout could not be loaded. Check your internet connection and try again.', 'error');
       return;
     }
-    const submit = document.getElementById('guestReserveButton');
-    submit.disabled = true;
+    setGuestQrPaymentInProgress(true);
     showGuestMessage('guestBookingMessage', 'Preparing secure Razorpay test checkout…');
     try {
-      const reservation = {
-        roomType,
-        checkIn: document.getElementById('guestCheckIn').value,
-        checkOut: document.getElementById('guestCheckOut').value,
-        guestsCount: Number(document.getElementById('guestCount').value),
-        specialRequests: document.getElementById('guestBookingNotes').value.trim() || null
-      };
+      const reservation = getGuestReservation(roomType);
       const order = await apiRequest('/guest/razorpay/orders', {
         method: 'POST',
         body: JSON.stringify(reservation)
@@ -122,7 +125,7 @@ function setupGuestBooking() {
         modal: {
           ondismiss: () => {
             if (checkoutFinished) return;
-            submit.disabled = false;
+            setGuestQrPaymentInProgress(false);
             showGuestMessage('guestBookingMessage', 'Checkout was closed. No reservation was confirmed.', 'error');
           }
         },
@@ -143,6 +146,7 @@ function setupGuestBooking() {
             renderGuestBookings();
             document.getElementById('guestBookingNotes').value = '';
             clearGuestAvailability();
+            setGuestQrPaymentInProgress(false);
             showGuestMessage(
               'guestBookingMessage',
               `Reservation ${booking.bookingId} is confirmed. Razorpay test payment complete for ${formatGuestMoney(booking.paidAmount)}; no real money was charged. Invoice ${booking.invoiceId}.`,
@@ -150,25 +154,198 @@ function setupGuestBooking() {
             );
             notifyMongoSyncStatus(booking.mongoSynced, 'Reservation and Razorpay test payment saved; no real money was charged.');
           } catch (error) {
-            submit.disabled = false;
+            setGuestQrPaymentInProgress(false);
             showGuestMessage('guestBookingMessage', error.message, 'error');
           }
         }
       });
       checkout.on('payment.failed', response => {
         checkoutFinished = true;
-        submit.disabled = false;
+        setGuestQrPaymentInProgress(false);
         const description = response.error?.description || 'Razorpay did not complete the test payment.';
         showGuestMessage('guestBookingMessage', `${description} No reservation was confirmed.`, 'error');
       });
       showGuestMessage('guestBookingMessage', 'Complete the payment in Razorpay test mode. No real money will be charged.');
       checkout.open();
     } catch (error) {
-      submit.disabled = false;
+      setGuestQrPaymentInProgress(false);
       showGuestMessage('guestBookingMessage', error.message, 'error');
       updateGuestPaymentQuote(document.getElementById('guestAvailableRooms').value);
     }
   });
+}
+
+function getGuestReservation(roomType) {
+  return {
+    roomType,
+    checkIn: document.getElementById('guestCheckIn').value,
+    checkOut: document.getElementById('guestCheckOut').value,
+    guestsCount: Number(document.getElementById('guestCount').value),
+    specialRequests: document.getElementById('guestBookingNotes').value.trim() || null
+  };
+}
+
+async function startGuestQrPayment() {
+  const roomType = document.getElementById('guestAvailableRooms').value;
+  const room = guestAvailableRooms.find(item => item.type === roomType);
+  if (!guestAccount || !room) {
+    showGuestMessage('guestBookingMessage', 'Check availability and select a room type first.', 'error');
+    return;
+  }
+
+  setGuestQrPaymentInProgress(true);
+  showGuestMessage('guestBookingMessage', 'Creating a single-use Razorpay test QR…');
+  try {
+    const reservation = getGuestReservation(roomType);
+    const qrCode = await apiRequest('/guest/razorpay/qr-codes', {
+      method: 'POST',
+      body: JSON.stringify(reservation)
+    });
+    const imageUrl = new URL(qrCode.imageUrl);
+    if (imageUrl.protocol !== 'https:') {
+      throw new Error('Razorpay returned an invalid QR image URL.');
+    }
+    activeGuestQrPayment = {
+      qrCodeId: qrCode.qrCodeId,
+      expiresAt: Number(qrCode.expiresAt) * 1000,
+      reservation
+    };
+    document.getElementById('guestQrCodeImage').src = imageUrl.href;
+    document.getElementById('guestQrCodeLink').href = imageUrl.href;
+    document.getElementById('guestQrAmount').textContent =
+      `Test amount: ${formatGuestMoney(qrCode.totalAmount)}`;
+    document.getElementById('guestQrPaymentInstructions').textContent =
+      'Scan through a UPI test flow supported by your Razorpay account before it expires. This single-use QR is valid for 15 minutes. Do not use a personal/live UPI account.';
+    document.getElementById('guestQrPayment').hidden = false;
+    showGuestMessage('guestBookingMessage', 'Waiting for Razorpay to confirm your test UPI payment…');
+    scheduleGuestQrStatusCheck();
+  } catch (error) {
+    setGuestQrPaymentInProgress(false);
+    showGuestMessage('guestBookingMessage', error.message, 'error');
+  }
+}
+
+function setGuestQrPaymentInProgress(inProgress) {
+  guestQrPaymentInProgress = inProgress;
+  ['guestCheckIn', 'guestCheckOut', 'guestCount', 'guestBookingNotes', 'guestCheckAvailability']
+    .forEach(id => { document.getElementById(id).disabled = inProgress || !guestAccount; });
+  const roomSelect = document.getElementById('guestAvailableRooms');
+  roomSelect.disabled = inProgress || !guestAccount || !guestAvailableRooms.length;
+  const hasRoom = Boolean(roomSelect.value && guestAvailableRooms.some(room => room.type === roomSelect.value));
+  document.getElementById('guestReserveButton').disabled = inProgress || !guestAccount || !hasRoom;
+  document.getElementById('guestQrPayButton').disabled = inProgress || !guestAccount || !hasRoom;
+}
+
+function scheduleGuestQrStatusCheck() {
+  if (!activeGuestQrPayment) return;
+  const delay = Math.min(5000, Math.max(0, activeGuestQrPayment.expiresAt - Date.now()));
+  activeGuestQrPayment.timer = window.setTimeout(checkGuestQrPaymentStatus, delay);
+}
+
+async function checkGuestQrPaymentStatus() {
+  const activePayment = activeGuestQrPayment;
+  if (!activePayment) return;
+  if (Date.now() >= activePayment.expiresAt && !activePayment.paymentDetected) {
+    activeGuestQrPayment = null;
+    document.getElementById('guestQrPayment').hidden = true;
+    document.getElementById('guestQrCodeImage').removeAttribute('src');
+    setGuestQrPaymentInProgress(false);
+    showGuestMessage('guestBookingMessage', 'This test QR expired without a confirmed payment. Create a new QR to try again.', 'error');
+    return;
+  }
+
+  try {
+    const result = await apiRequest(
+      `/guest/razorpay/qr-codes/${encodeURIComponent(activePayment.qrCodeId)}`
+    );
+    if (activeGuestQrPayment !== activePayment) return;
+    if (result.status === 'paid') {
+      await confirmGuestQrBooking(activePayment);
+      return;
+    }
+    if (result.status === 'expired') {
+      activeGuestQrPayment = null;
+      document.getElementById('guestQrPayment').hidden = true;
+      document.getElementById('guestQrCodeImage').removeAttribute('src');
+      setGuestQrPaymentInProgress(false);
+      showGuestMessage('guestBookingMessage', 'This test QR expired without a confirmed payment. Create a new QR to try again.', 'error');
+      return;
+    }
+    showGuestMessage('guestBookingMessage', 'Waiting for Razorpay to confirm your test UPI payment…');
+  } catch (error) {
+    if (activeGuestQrPayment !== activePayment) return;
+    showGuestMessage('guestBookingMessage', `${error.message} We will keep checking while this QR is active.`, 'error');
+  }
+  scheduleGuestQrStatusCheck();
+}
+
+async function confirmGuestQrBooking(activePayment) {
+  if (activeGuestQrPayment !== activePayment || activePayment.isConfirming) return;
+  activePayment.paymentDetected = true;
+  activePayment.isConfirming = true;
+  document.getElementById('guestQrCancelButton').disabled = true;
+  document.getElementById('guestQrRetryButton').hidden = true;
+  showGuestMessage('guestBookingMessage', 'Payment detected. Verifying it and confirming your reservation…');
+  try {
+    const booking = await apiRequest('/guest/bookings/qr', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...activePayment.reservation,
+        qrCodeId: activePayment.qrCodeId
+      })
+    });
+    activeGuestQrPayment = null;
+    document.getElementById('guestQrPayment').hidden = true;
+    document.getElementById('guestQrCodeImage').removeAttribute('src');
+    guestAccount.bookings.unshift(booking);
+    renderGuestBookings();
+    populateServiceBookingOptions();
+    document.getElementById('guestBookingNotes').value = '';
+    clearGuestAvailability();
+    showGuestMessage(
+      'guestBookingMessage',
+      `Reservation ${booking.bookingId} is confirmed. Razorpay test QR payment complete for ${formatGuestMoney(booking.paidAmount)}; no real money was charged. Invoice ${booking.invoiceId}.`,
+      'success'
+    );
+    notifyMongoSyncStatus(booking.mongoSynced, 'Reservation and Razorpay test QR payment saved; no real money was charged.');
+  } catch (error) {
+    document.getElementById('guestQrRetryButton').hidden = false;
+    showGuestMessage(
+      'guestBookingMessage',
+      `Payment was detected, but reservation confirmation failed: ${error.message} Select “Retry reservation confirmation” to try again.`,
+      'error'
+    );
+  } finally {
+    activePayment.isConfirming = false;
+    if (!activeGuestQrPayment) {
+      setGuestQrPaymentInProgress(false);
+      document.getElementById('guestQrCancelButton').disabled = false;
+      document.getElementById('guestQrRetryButton').hidden = true;
+    }
+  }
+}
+
+async function cancelGuestQrPayment() {
+  const activePayment = activeGuestQrPayment;
+  if (!activePayment || activePayment.paymentDetected) return;
+  document.getElementById('guestQrCancelButton').disabled = true;
+  try {
+    await apiRequest(
+      `/guest/razorpay/qr-codes/${encodeURIComponent(activePayment.qrCodeId)}/close`,
+      { method: 'POST' }
+    );
+    if (activePayment.timer) window.clearTimeout(activePayment.timer);
+    activeGuestQrPayment = null;
+    document.getElementById('guestQrPayment').hidden = true;
+    document.getElementById('guestQrCodeImage').removeAttribute('src');
+    document.getElementById('guestQrRetryButton').hidden = true;
+    setGuestQrPaymentInProgress(false);
+    showGuestMessage('guestBookingMessage', 'The test QR was cancelled. No reservation was confirmed.');
+  } catch (error) {
+    showGuestMessage('guestBookingMessage', error.message, 'error');
+  } finally {
+    document.getElementById('guestQrCancelButton').disabled = false;
+  }
 }
 
 async function loadGuestAvailability() {
@@ -222,9 +399,12 @@ function clearGuestAvailability() {
     'Check availability and select a room to see the total.';
   document.getElementById('guestRoomPreview').hidden = true;
   document.getElementById('guestRoomImage').removeAttribute('src');
+  document.getElementById('guestQrPayment').hidden = true;
+  document.getElementById('guestQrCodeImage').removeAttribute('src');
   const submit = document.getElementById('guestReserveButton');
   submit.disabled = true;
   submit.textContent = 'Continue to Razorpay Test Checkout';
+  document.getElementById('guestQrPayButton').disabled = true;
 }
 
 function updateGuestPaymentQuote(roomType) {
@@ -247,8 +427,9 @@ function updateGuestPaymentQuote(roomType) {
     `${room.nights} night(s): ${formatGuestMoney(room.subtotal)} + tax ${formatGuestMoney(room.taxAmount)} = ${formatGuestMoney(room.totalAmount)} total`;
   document.getElementById('guestRoomPreview').hidden = false;
   paymentSummary.textContent = 'Razorpay test mode only. No real money will be charged.';
-  submit.disabled = false;
+  submit.disabled = guestQrPaymentInProgress || !guestAccount;
   submit.textContent = `Continue to Razorpay · ${formatGuestMoney(room.totalAmount)}`;
+  document.getElementById('guestQrPayButton').disabled = guestQrPaymentInProgress || !guestAccount;
 }
 
 function guestRoomImage(roomType) {

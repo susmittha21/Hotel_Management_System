@@ -139,6 +139,38 @@
   opacity: 0.6;
 }
 
+.guest-qr-payment {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #dce5dc;
+  border-radius: 12px;
+  background: #fbfcfa;
+  text-align: center;
+}
+
+.guest-qr-payment[hidden] {
+  display: none;
+}
+
+.guest-qr-payment h3 {
+  margin-bottom: 6px;
+}
+
+.guest-qr-payment img {
+  display: block;
+  width: min(280px, 100%);
+  aspect-ratio: 1;
+  margin: 14px auto;
+  object-fit: contain;
+}
+
+.guest-qr-amount {
+  margin: 8px 0 16px;
+  color: #173c42;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
 @media (max-width: 600px) {
   .guest-header {
     align-items: flex-start;

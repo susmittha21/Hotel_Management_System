@@ -78,7 +78,7 @@
           </div>
           <div class="form-group" style="grid-column: 1 / -1;">
             <h3>Payment</h3>
-            <p class="guest-muted">Checkout opens Razorpay in test mode. A verified test payment completes your reservation; no real money is charged.</p>
+            <p class="guest-muted">Choose Razorpay Checkout or scan a single-use Razorpay test QR through a test-mode UPI flow. Never use a personal/live UPI account. A verified test payment completes your reservation; no real money is charged.</p>
             <p id="guestPaymentSummary" class="guest-muted" aria-live="polite">Check availability and select a room to see the total.</p>
           </div>
           <div class="form-group" style="grid-column: 1 / -1;">
@@ -87,9 +87,20 @@
           </div>
           <div class="guest-form-actions">
             <button id="guestReserveButton" class="btn btn-primary" type="submit" disabled>Continue to Razorpay Test Checkout</button>
+            <button id="guestQrPayButton" class="btn btn-secondary" type="button" disabled>Pay by Test QR</button>
           </div>
         </div>
       </form>
+      <section id="guestQrPayment" class="guest-qr-payment" aria-live="polite" hidden>
+        <h3>Scan to pay with UPI (test mode)</h3>
+        <p id="guestQrPaymentInstructions" class="guest-muted"></p>
+        <a id="guestQrCodeLink" target="_blank" rel="noopener noreferrer">
+          <img id="guestQrCodeImage" alt="Razorpay test payment QR code">
+        </a>
+        <p id="guestQrAmount" class="guest-qr-amount"></p>
+        <button id="guestQrCancelButton" class="btn btn-secondary" type="button">Cancel QR payment</button>
+        <button id="guestQrRetryButton" class="btn btn-primary" type="button" hidden>Retry reservation confirmation</button>
+      </section>
       <p id="guestBookingMessage" class="guest-message" role="status" aria-live="polite"></p>
     </section>
 
