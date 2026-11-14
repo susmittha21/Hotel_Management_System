@@ -47,24 +47,27 @@ function renderFoodOrdersTable() {
   }
 
   const invoices = HotelStore.getInvoices();
-  tableBody.innerHTML = orders.map(order => `
-    <tr>
-      <td>${order.orderId}</td>
-      <td>${escapeHtml(order.guestName)}</td>
-      <td>${order.item}</td>
-      <td>${order.quantity}</td>
-      <td>₹${Number(order.total).toLocaleString('en-IN')}</td>
-      <td><span class="status-badge ${order.status.toLowerCase().replace(/\s+/g, '-')}">${order.status}</span></td>
-      <td>${renderActionMenu(order.orderId, [
-        { action: 'edit', label: 'Edit order' },
-        {
-          action: 'delete',
-          label: 'Delete order',
-          disabled: invoices.some(invoice => invoice.lines?.some(line => line.referenceCode === order.orderId))
-        }
-      ])}</td>
-    </tr>
-  `).join('');
+  tableBody.innerHTML = orders.map(order => {
+    const billed = invoices.some(invoice => invoice.lines?.some(line => line.referenceCode === order.orderId));
+    return `
+      <tr>
+        <td>${order.orderId}</td>
+        <td>${escapeHtml(order.guestName)}</td>
+        <td>${order.item}</td>
+        <td>${order.quantity}</td>
+        <td>₹${Number(order.total).toLocaleString('en-IN')}</td>
+        <td><span class="status-badge ${order.status.toLowerCase().replace(/\s+/g, '-')}">${order.status}</span></td>
+        <td>${renderActionMenu(order.orderId, [
+          { action: 'edit', label: 'Edit order' },
+          {
+            action: 'delete',
+            label: billed ? 'Delete order (linked to invoice)' : 'Delete order',
+            disabled: billed
+          }
+        ])}</td>
+      </tr>
+    `;
+  }).join('');
 }
 
 function setupFoodOrderForm() {

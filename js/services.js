@@ -35,24 +35,31 @@ function renderServicesTable() {
     return;
   }
 
-  tableBody.innerHTML = services.map(service => `
-    <tr>
-      <td>${escapeHtml(service.serviceId)}</td>
-      <td>${escapeHtml(service.name)}</td>
-      <td>${escapeHtml(service.category)}</td>
-      <td>₹${Number(service.price).toLocaleString('en-IN')}</td>
-      <td>${canManageServices ? renderActionMenu(service.serviceId, [
-        { action: 'edit', label: 'Edit service' },
-        {
-          action: 'delete',
-          label: 'Delete service',
-          disabled: HotelStore.getInvoices().some(invoice =>
-            invoice.lines?.some(line => line.referenceCode === service.serviceId)
-          ) || HotelStore.getServiceRequests().some(request => request.serviceId === service.serviceId)
-        }
-      ]) : '—'}</td>
-    </tr>
-  `).join('');
+  const invoices = HotelStore.getInvoices();
+  const serviceRequests = HotelStore.getServiceRequests();
+  tableBody.innerHTML = services.map(service => {
+    const hasInvoice = invoices.some(invoice =>
+      invoice.lines?.some(line => line.referenceCode === service.serviceId)
+    );
+    const hasRequests = serviceRequests.some(request => request.serviceId === service.serviceId);
+    const cannotDelete = hasInvoice || hasRequests;
+    return `
+      <tr>
+        <td>${escapeHtml(service.serviceId)}</td>
+        <td>${escapeHtml(service.name)}</td>
+        <td>${escapeHtml(service.category)}</td>
+        <td>₹${Number(service.price).toLocaleString('en-IN')}</td>
+        <td>${canManageServices ? renderActionMenu(service.serviceId, [
+          { action: 'edit', label: 'Edit service' },
+          {
+            action: 'delete',
+            label: cannotDelete ? 'Delete service (linked records)' : 'Delete service',
+            disabled: cannotDelete
+          }
+        ]) : '—'}</td>
+      </tr>
+    `;
+  }).join('');
 }
 
 function renderServiceRequests() {

@@ -24,6 +24,8 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import URL, create_engine, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -440,7 +442,7 @@ class GuestRegisterRequest(BaseModel):
 
     fullName: str = Field(min_length=5, max_length=100)
     email: str = Field(min_length=6, max_length=100)
-    phone: str = Field(min_length=8, max_length=20)
+    phone: str = Field(min_length=10, max_length=20)
     password: str = Field(min_length=10, max_length=200)
 
     @field_validator("fullName")
@@ -469,9 +471,17 @@ class GuestRegisterRequest(BaseModel):
     @classmethod
     def validate_phone(cls, value: str) -> str:
         normalized = re.sub(r"[\s()-]", "", value)
-        if not re.fullmatch(r"\+?[0-9]{8,15}", normalized):
-            raise ValueError("Enter a valid phone number with 8 to 15 digits.")
-        return normalized
+        if normalized.startswith("+91"):
+            national_number = normalized[3:]
+        elif len(normalized) == 12 and normalized.startswith("91"):
+            national_number = normalized[2:]
+        else:
+            national_number = normalized
+        if not re.fullmatch(r"[6-9][0-9]{9}", national_number):
+            raise ValueError(
+                "Enter a valid 10-digit Indian mobile number starting with 6-9, optionally with +91."
+            )
+        return f"+91{national_number}"
 
     @field_validator("password")
     @classmethod
@@ -672,6 +682,15 @@ def mongo_dashboard_analytics(collections: dict[str, list[dict[str, Any]]]) -> d
         and not invoice.get("paymentNote")
         and str(invoice.get("paymentDate", "")).startswith(today)
     )
+    test_payments_today = sum(
+        float(invoice.get("total", 0))
+        for invoice in collections["invoices"]
+        if invoice.get("status") == "Paid"
+        and str(invoice.get("paymentNote") or "").startswith(
+            ("Razorpay test payment.", "Test payment.", "No money was charged.")
+        )
+        and str(invoice.get("paymentDate", "")).startswith(today)
+    )
     return {
         "totalRooms": len(rooms),
         "occupiedRooms": occupied,
@@ -686,6 +705,7 @@ def mongo_dashboard_analytics(collections: dict[str, list[dict[str, Any]]]) -> d
             for booking in bookings
         ),
         "revenueToday": paid_today,
+        "testPaymentsToday": test_payments_today,
         "roomTypes": [
             {"name": name, **summary}
             for name, summary in sorted(totals_by_type.items())
@@ -716,6 +736,8 @@ app.add_middleware(
 
 @app.get("/")
 def api_root():
+    if os.getenv("VERCEL") == "1":
+        return FileResponse(ROOT_DIR / "index.html")
     return {
         "message": "VS Plaza Hotel Management API is running.",
         "docs": "/docs",
@@ -2267,3 +2289,8 @@ def update_room_status(
             status_code=503,
             detail="Unable to update room availability. Check the database connection and schema.",
         ) from None
+
+
+app.mount("/css", StaticFiles(directory=ROOT_DIR / "css"), name="css")
+app.mount("/js", StaticFiles(directory=ROOT_DIR / "js"), name="js")
+app.mount("/pages", StaticFiles(directory=ROOT_DIR / "pages", html=True), name="pages")

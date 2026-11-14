@@ -17,18 +17,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderQuickRoomStatus();
   renderGuestReservationRequests();
   renderDashboardServiceRequests();
+  window.setInterval(() => {
+    if (!document.hidden) refreshDashboardStats({ notify: false });
+  }, 30000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshDashboardStats({ notify: false });
+  });
 });
 
 let dashboardStats = null;
 
-async function refreshDashboardStats() {
+async function refreshDashboardStats({ notify = true } = {}) {
   try {
     dashboardStats = await HotelStore.getDashboardAnalytics();
     renderDashboardMetrics(dashboardStats);
     renderQuickRoomStatus();
   } catch (error) {
     console.error('Unable to load dashboard analytics from PostgreSQL.', error);
-    showToast(`Could not load dashboard analytics: ${error.message}`, 'error');
+    if (notify) showToast(`Could not load dashboard analytics: ${error.message}`, 'error');
   }
 }
 
@@ -37,13 +43,11 @@ function renderDashboardMetrics(stats) {
   const elOccupied = document.getElementById('metricOccupiedRooms');
   const elAvailable = document.getElementById('metricAvailableRooms');
   const elArrivals = document.getElementById('metricArrivals');
-  const elRevenue = document.getElementById('metricTodayRevenue');
 
   if (elOccRate) elOccRate.textContent = `${stats.occupancyRate}%`;
   if (elOccupied) elOccupied.textContent = `${stats.occupiedRooms} / ${stats.totalRooms}`;
   if (elAvailable) elAvailable.textContent = stats.availableRooms;
   if (elArrivals) elArrivals.textContent = stats.arrivalsToday;
-  if (elRevenue) elRevenue.textContent = `₹${Number(stats.revenueToday).toLocaleString('en-IN')}`;
 }
 
 function renderArrivalsTable() {

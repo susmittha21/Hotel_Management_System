@@ -86,10 +86,16 @@ function renderBookingsTable(searchQuery = '') {
     } else if (b.status === 'Checked-In') {
       actions.push({ action: 'check-out', label: 'Check out' });
     }
+    const cannotDelete = linkedRecord || b.status === 'Checked-In' || b.status === 'Checked-Out';
+    const deleteReason = b.status === 'Checked-In'
+      ? 'active stay'
+      : b.status === 'Checked-Out'
+        ? 'completed stay'
+        : linkedRecord ? 'linked records' : '';
     actions.push({
       action: 'delete',
-      label: 'Delete reservation',
-      disabled: linkedRecord || b.status === 'Checked-In' || b.status === 'Checked-Out'
+      label: cannotDelete ? `Delete reservation (${deleteReason})` : 'Delete reservation',
+      disabled: cannotDelete
     });
 
     return `

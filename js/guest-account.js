@@ -12,6 +12,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   const message = document.getElementById('guestAccountMessage');
   let resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset_token') || '';
 
+  function normalizeIndianMobile(value) {
+    const normalized = String(value).replace(/[\s()-]/g, '');
+    let nationalNumber = normalized;
+    if (normalized.startsWith('+91')) {
+      nationalNumber = normalized.slice(3);
+    } else if (normalized.length === 12 && normalized.startsWith('91')) {
+      nationalNumber = normalized.slice(2);
+    }
+    return /^[6-9][0-9]{9}$/.test(nationalNumber) ? `+91${nationalNumber}` : '';
+  }
+
   function setMode(mode) {
     const registering = mode === 'register';
     const recovering = mode === 'forgot' || mode === 'reset';
@@ -49,6 +60,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'’-]*(?: [A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'’-]*)+$/.test(name)
         ? ''
         : 'Enter a valid first and last name.'
+    );
+  });
+
+  const phoneInput = document.getElementById('guestRegisterPhone');
+  const phoneError = 'Enter a valid 10-digit Indian mobile number starting with 6-9, optionally with +91.';
+  phoneInput.addEventListener('input', () => {
+    phoneInput.setCustomValidity(
+      !phoneInput.value.trim() || normalizeIndianMobile(phoneInput.value) ? '' : phoneError
     );
   });
 
@@ -174,13 +193,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     message.className = 'guest-message';
     message.textContent = 'Creating your account…';
     const formData = new FormData(registerForm);
+    const phone = normalizeIndianMobile(formData.get('phone'));
+    if (!phone) {
+      phoneInput.setCustomValidity(phoneError);
+      phoneInput.reportValidity();
+      return;
+    }
+    phoneInput.setCustomValidity('');
     try {
       const registration = await apiRequest('/guest/register', {
         method: 'POST',
         body: JSON.stringify({
           fullName: formData.get('fullName').trim().replace(/\s+/g, ' '),
           email: formData.get('email').trim(),
-          phone: formData.get('phone').trim(),
+          phone,
           password: formData.get('password')
         })
       });

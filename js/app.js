@@ -59,7 +59,7 @@ const ROLE_HOME_MODULE = {
 };
 
 const defaultApiUrl = new URL(window.location.origin);
-defaultApiUrl.port = '8000';
+if (window.location.port) defaultApiUrl.port = '8000';
 defaultApiUrl.pathname = '/api';
 const API_BASE_URL = (window.HOTEL_API_BASE_URL || defaultApiUrl.href).replace(/\/+$/, '');
 const DATA_COLLECTIONS = {

@@ -960,6 +960,16 @@ def dashboard_analytics(connection: Connection, schema: str) -> dict[str, Any]:
                        SELECT COALESCE(SUM(amount), 0) FROM "{schema}".payment
                        WHERE payment_status='Completed'
                          AND payment_date::date=CURRENT_DATE
+                         AND (
+                             payment_reference LIKE 'RAZORPAY-TEST-%'
+                             OR payment_reference LIKE 'NOCHARGE-%'
+                             OR payment_reference LIKE 'DEMO-%'
+                         )
+                   ) AS test_payments_today,
+                   (
+                       SELECT COALESCE(SUM(amount), 0) FROM "{schema}".payment
+                       WHERE payment_status='Completed'
+                         AND payment_date::date=CURRENT_DATE
                          AND COALESCE(payment_reference, '') NOT LIKE 'NOCHARGE-%'
                          AND COALESCE(payment_reference, '') NOT LIKE 'DEMO-%'
                          AND COALESCE(payment_reference, '') NOT LIKE 'RAZORPAY-TEST-%'
@@ -991,6 +1001,7 @@ def dashboard_analytics(connection: Connection, schema: str) -> dict[str, Any]:
         "arrivalsToday": int(totals["arrivals_today"]),
         "departuresToday": int(totals["departures_today"]),
         "revenueToday": float(totals["revenue_today"]),
+        "testPaymentsToday": float(totals["test_payments_today"]),
         "roomTypes": [
             {"name": row["name"], "total": int(row["total"]), "available": int(row["available"])}
             for row in room_types

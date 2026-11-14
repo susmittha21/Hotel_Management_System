@@ -46,7 +46,7 @@
       <form id="guestRegisterForm" hidden>
         <div class="form-group">
           <label class="form-label" for="guestFullName">Full Name</label>
-          <input class="form-control" id="guestFullName" name="fullName" type="text" minlength="5" maxlength="100" autocomplete="name" pattern="[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'’-]*(\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'’-]*)+" required>
+          <input class="form-control" id="guestFullName" name="fullName" type="text" minlength="5" maxlength="100" autocomplete="name" required>
         </div>
         <div class="form-group">
           <label class="form-label" for="guestRegisterEmail">Email</label>
@@ -54,7 +54,7 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="guestRegisterPhone">Phone</label>
-          <input class="form-control" id="guestRegisterPhone" name="phone" type="tel" minlength="8" maxlength="20" pattern="\+?[0-9\s()-]{8,20}" autocomplete="tel" placeholder="+91 98765 43210" required>
+          <input class="form-control" id="guestRegisterPhone" name="phone" type="tel" minlength="10" maxlength="20" autocomplete="tel" inputmode="tel" placeholder="+91 98765 43210" title="Enter a 10-digit Indian mobile number starting with 6-9, optionally with +91." required>
         </div>
         <div class="form-group">
           <label class="form-label" for="guestRegisterPassword">Password</label>

@@ -620,7 +620,7 @@ function configureFoodOrderLink() {
     link.href = target.href;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    link.textContent = 'Order with Zomato';
+    link.textContent = 'Order with CraveLane';
     link.setAttribute('aria-disabled', 'false');
   } catch (error) {
     console.error('The configured food ordering link is invalid.', error);

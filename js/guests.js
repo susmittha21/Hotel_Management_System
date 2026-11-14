@@ -83,7 +83,11 @@ function renderGuestDirectory(query = '') {
         <td>${renderActionMenu(g.guestId, [
           { action: 'view', label: 'View profile' },
           { action: 'edit', label: 'Edit guest' },
-          { action: 'delete', label: 'Delete guest', disabled: hasBookings }
+          {
+            action: 'delete',
+            label: hasBookings ? 'Delete guest (reservation history)' : 'Delete guest',
+            disabled: hasBookings
+          }
         ])}</td>
       </tr>
     `;
