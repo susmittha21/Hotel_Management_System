@@ -40,9 +40,9 @@ The website must be served over HTTP or HTTPS. Opening the HTML files directly w
 ### Backend Database Purpose
 This frontend is designed as a hotel operations UI for a real backend database system:
 - **PostgreSQL** stores shared business data such as guest records, the fixed room inventory, bookings, staff, invoices, and payments.
-- **MongoDB** stores matching application collection documents. Each app write is mirrored to both configured databases.
+- **MongoDB** stores a mirror of application collections. PostgreSQL remains the source of truth; mirroring is best-effort when MongoDB is reachable.
 - **Frontend responsibility**: collect user actions, render dashboard tables, and send API requests to backend endpoints. It does not manage business data directly in production.
-- **Current API flow**: browser UI -> FastAPI -> selected database for reads; writes -> PostgreSQL and MongoDB -> response -> browser update.
+- **Current API flow**: browser UI -> FastAPI -> selected database for reads; writes -> PostgreSQL, then best-effort MongoDB mirror -> browser update.
 
 ### FastAPI and PostgreSQL Connection
 The FastAPI service stores management records in PostgreSQL's relational tables and can mirror the same frontend entities to MongoDB collections. PostgreSQL remains the source of truth for writes and billing transactions. Selecting PostgreSQL works without MongoDB; selecting MongoDB requires it to be reachable and refreshes the mirrored collections from PostgreSQL. Browser `localStorage` is only a cache.
@@ -61,6 +61,8 @@ The FastAPI service stores management records in PostgreSQL's relational tables 
 The backend seeds the shared room inventory to 30 rooms when it contains fewer than 30; existing rooms are preserved, and the room catalog cannot be added to or deleted through the app. Room cards link directly to the shared reservation flow. All staff login roles can view rooms and create reservations, and changes are stored in the database rather than isolated in a browser cache.
 
 The landing page sends room reservations to the Guest Portal. Guests register or sign in before checking availability and submitting a reservation. Guest accounts use a separate PostgreSQL `guest_account` table with PBKDF2-hashed passwords; guests can see only their own reservations, room types, hotel service requests, and reviews (physical room numbers remain staff-only). Before a reservation is confirmed, the guest selects an available room type and pays through Razorpay Checkout in test mode or scans a single-use, fixed-amount Razorpay test QR code. The backend verifies the payment with Razorpay, rechecks room availability and price, prevents reusing the same payment, automatically assigns a physical room, then creates the GST-inclusive invoice and reservation. Test mode does not charge or transfer real money. A failed or unverified payment leaves no confirmed reservation or invoice. Paid guest invoices appear in the Hotel Manager and Accounts Cashier invoice pages. Guest service requests are stored in `service_request` and appear in the staff dashboard and Hotel Services page. Guests can submit one 1–5-star review with a comment for each checked-out reservation; reviews are stored in PostgreSQL and appear in the Hotel Manager Reviews page. These tables are created automatically when the backend initializes the schema.
+
+Guests can use **Forgot password?** on the Guest Portal sign-in form. Password recovery sends a single-use reset link by SMTP; configure `PMS_SMTP_HOST`, `PMS_SMTP_PORT`, `PMS_SMTP_FROM`, and any required SMTP username/password in the root `.env`. `PMS_GUEST_RESET_URL` must point to the deployed guest account page (use HTTPS outside local development). Reset links expire after 30 minutes. Restart FastAPI after changing `.env`, and keep SMTP credentials private.
 
 To enable guest checkout and test QR payments, obtain API keys in Razorpay Dashboard's Test Mode and set `RAZORPAY_KEY_ID` (must start with `rzp_test_`) and `RAZORPAY_KEY_SECRET` in the root `.env`. Restart FastAPI after changing `.env`. The Razorpay QR Codes API (`upi_qr`) may need to be enabled for your Razorpay account; contact Razorpay support if test QR creation is rejected as unavailable. The backend rejects live key IDs. Keep the secret in the backend environment; do not expose it in frontend files or commit it to Git. Checkout requires internet access to load Razorpay's hosted Checkout script.
 
@@ -81,16 +83,6 @@ py -c "import secrets; print(secrets.token_urlsafe(48))"
 Copy the output to `PMS_SESSION_SECRET`. Keep all account credentials and the session key private and out of Git. On the login screen, select the matching role, select PostgreSQL or MongoDB as the read database, then enter that role's username and password. The backend verifies the username/password against the selected role; the role is not just a visual preference. Writes always save to PostgreSQL first and are mirrored to MongoDB when it is reachable. MongoDB being offline does not block PostgreSQL use. The backend sets an HTTP-only session cookie and enforces role permissions. Use the same `localhost` hostname for both local servers (frontend `http://localhost:3000`). For HTTPS deployments, set `PMS_COOKIE_SECURE=true`, configure `CORS_ORIGINS` to the exact frontend origin, and set `window.HOTEL_API_BASE_URL` to the deployed API URL ending in `/api`.
 
 The database selector does not connect to a database on the browser's laptop. When using MongoDB, its endpoint must be network-accessible from the FastAPI computer. If your team has PostgreSQL and MongoDB on different laptops, configure `MONGO_URI` with the MongoDB laptop's reachable LAN/VPN address and restrict the database port to trusted devices; the frontend alone cannot synchronize two unreachable laptops.
-
-#### Deployment checklist
-
-- Serve the frontend and API over HTTPS. Set `window.HOTEL_API_BASE_URL` in `js/app.js` to the deployed API base URL ending in `/api`; do not leave the localhost default in a deployed build.
-- Set `CORS_ORIGINS` to the exact HTTPS frontend origin(s), without a wildcard. The browser sends the login cookie with API requests, so deploy frontend and API on the same site (for example, `hotel.example.com` and `api.example.com`) and keep credentials-enabled CORS.
-- Set `PMS_COOKIE_SECURE=true` in the production backend environment. Keep `.env` private and configure database credentials, at least one staff account, and a random `PMS_SESSION_SECRET` of 32 or more characters.
-- Run FastAPI behind a trusted HTTPS reverse proxy or managed application host; do not use `--reload` in production. Keep PostgreSQL private and reachable only by the backend. MongoDB remains optional unless users choose it at staff sign-in.
-- After deployment, verify `/` and `/api/health`, then exercise guest registration/sign-in, staff sign-in, availability, service requests, reviews, and invoice workflows against the deployed database.
-
-This project can be deployed as a web application when those environment and hosting requirements are met. Razorpay checkout is separately restricted to test credentials, so it does not collect real payments.
 
 #### Invoice calculation
 
@@ -255,7 +247,15 @@ CREATE TABLE STAFF (
 
 ### 2. MongoDB NoSQL Database Setup
 
-The API connects to MongoDB using `MONGO_URI` and `MONGO_DB_NAME` from `.env`. Install the dependencies with `py -m pip install -r requirements.txt` and ensure MongoDB is running and reachable before login. The API creates and maintains collections named `rooms`, `guests`, `bookings`, `departments`, `staff`, `invoices`, `food_menu`, `food_orders`, `services`, and `reviews`. Each document is the corresponding frontend entity, keyed by its stable frontend ID. You do not need to run the separate legacy Express server in `backend/server.js` or manually insert the examples below for the current app.
+The current FastAPI app connects to MongoDB using `MONGO_URI` and `MONGO_DB_NAME` from the backend environment. The local example URI (`mongodb://127.0.0.1:27017`) works only when a MongoDB server is installed and running on the same machine as FastAPI. For a deployed app or access from multiple devices, use a hosted MongoDB cluster such as MongoDB Atlas:
+
+1. Create a cluster and a database user with read/write access only to the `hotel_mongodb` database.
+2. In the cluster's network access settings, allow the backend host's outbound IP address(es). Do not expose the database to every IP (`0.0.0.0/0`); use a host with static egress or private networking if its outbound IP changes.
+3. Copy the cluster's `mongodb+srv://` connection string into the backend host's secret/environment variable `MONGO_URI`, URL-encoding special characters in the database user's password. Set `MONGO_DB_NAME=hotel_mongodb` there as well. Never put this URI in frontend JavaScript or commit it to Git.
+
+The backend creates and maintains the `rooms`, `guests`, `bookings`, `departments`, `staff`, `invoices`, `food_menu`, `food_orders`, `services`, `reviews`, and `service_requests` collections and their stable-ID indexes. On MongoDB login or data reads, it refreshes the mirror from PostgreSQL; subsequent PostgreSQL writes attempt to refresh it too. PostgreSQL is authoritative, so direct MongoDB edits can be overwritten by the next synchronization. Guest account password hashes are not mirrored.
+
+Check `GET /api/health` after configuring the backend: it reports MongoDB as `connected` or `disconnected` separately from PostgreSQL. MongoDB may be unavailable when users choose PostgreSQL, but it must be reachable for MongoDB-selected reads and login. The `.env.example` URI is for local development only; keep production connection strings in the backend host's environment/secrets.
 
 The examples below show an older, optional document-design exercise. They are separate from the current synchronized app collections:
 ```javascript

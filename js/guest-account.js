@@ -3,20 +3,44 @@ document.addEventListener('DOMContentLoaded', async () => {
   const registerForm = document.getElementById('guestRegisterForm');
   const loginTab = document.getElementById('guestLoginTab');
   const registerTab = document.getElementById('guestRegisterTab');
+  const authToggle = document.getElementById('guestAuthToggle');
+  const forgotPasswordButton = document.getElementById('guestForgotPasswordButton');
+  const forgotPanel = document.getElementById('guestForgotPanel');
+  const forgotForm = document.getElementById('guestForgotForm');
+  const resetPanel = document.getElementById('guestResetPanel');
+  const resetForm = document.getElementById('guestResetForm');
   const message = document.getElementById('guestAccountMessage');
+  let resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset_token') || '';
 
   function setMode(mode) {
     const registering = mode === 'register';
-    loginForm.hidden = registering;
+    const recovering = mode === 'forgot' || mode === 'reset';
+    authToggle.hidden = recovering;
+    loginForm.hidden = registering || recovering;
     registerForm.hidden = !registering;
+    forgotPanel.hidden = mode !== 'forgot';
+    resetPanel.hidden = mode !== 'reset';
     loginTab.className = registering ? 'btn btn-secondary' : 'btn btn-primary';
     registerTab.className = registering ? 'btn btn-primary' : 'btn btn-secondary';
     message.textContent = '';
   }
 
+  function clearResetTokenFromUrl() {
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+  }
+
   loginTab.addEventListener('click', () => setMode('login'));
   registerTab.addEventListener('click', () => setMode('register'));
-  setMode(new URLSearchParams(window.location.search).get('mode') === 'register' ? 'register' : 'login');
+  forgotPasswordButton.addEventListener('click', () => {
+    document.getElementById('guestForgotEmail').value =
+      document.getElementById('guestLoginEmail').value.trim();
+    setMode('forgot');
+  });
+  document.getElementById('guestBackFromForgot').addEventListener('click', () => setMode('login'));
+  document.getElementById('guestBackFromReset').addEventListener('click', () => {
+    resetToken = '';
+    setMode('login');
+  });
 
   const fullName = document.getElementById('guestFullName');
   fullName.addEventListener('input', () => {
@@ -27,21 +51,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         : 'Enter a valid first and last name.'
     );
   });
-  const password = document.getElementById('guestRegisterPassword');
-  password.addEventListener('input', () => {
-    password.setCustomValidity(
-      /^(?=.*[A-Za-z])(?=.*\d)\S+$/.test(password.value)
-        ? ''
-        : 'Use at least one letter and one number, without spaces.'
-    );
-  });
 
-  try {
-    const session = await apiRequest('/auth/me');
-    if (session.role === 'Guest') window.location.replace('guest-dashboard.html');
-  } catch (error) {
-    if (error.message !== 'A valid login is required.') {
-      console.warn('Unable to verify an existing guest session.', error);
+  function validateGuestPassword(input) {
+    input.addEventListener('input', () => {
+      input.setCustomValidity(
+        /^(?=.*[A-Za-z])(?=.*\d)\S{10,200}$/.test(input.value)
+          ? ''
+          : 'Use at least 10 characters, including a letter and a number; no spaces.'
+      );
+    });
+  }
+
+  const registerPassword = document.getElementById('guestRegisterPassword');
+  const resetPassword = document.getElementById('guestResetPassword');
+  const resetPasswordConfirm = document.getElementById('guestResetPasswordConfirm');
+  validateGuestPassword(registerPassword);
+  validateGuestPassword(resetPassword);
+
+  function validateResetPasswordConfirmation() {
+    resetPasswordConfirm.setCustomValidity(
+      resetPasswordConfirm.value && resetPasswordConfirm.value !== resetPassword.value
+        ? 'Passwords do not match.'
+        : ''
+    );
+  }
+
+  resetPassword.addEventListener('input', validateResetPasswordConfirmation);
+  resetPasswordConfirm.addEventListener('input', validateResetPasswordConfirmation);
+
+  if (resetToken) {
+    clearResetTokenFromUrl();
+    setMode('reset');
+  } else {
+    setMode(new URLSearchParams(window.location.search).get('mode') === 'register' ? 'register' : 'login');
+  }
+
+  if (!resetToken) {
+    try {
+      const session = await apiRequest('/auth/me');
+      if (session.role === 'Guest') window.location.replace('guest-dashboard.html');
+    } catch (error) {
+      if (error.message !== 'A valid login is required.') {
+        console.warn('Unable to verify an existing guest session.', error);
+      }
     }
   }
 
@@ -61,6 +113,55 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       HotelStore.setAuth({ loggedIn: true, user: session.email, role: session.role });
       window.location.assign('guest-dashboard.html');
+    } catch (error) {
+      message.className = 'guest-message error';
+      message.textContent = error.message;
+    }
+  });
+
+  forgotForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!forgotForm.reportValidity()) return;
+    message.className = 'guest-message';
+    message.textContent = 'Requesting a reset link…';
+    const formData = new FormData(forgotForm);
+    try {
+      const result = await apiRequest('/guest/password-reset/request', {
+        method: 'POST',
+        body: JSON.stringify({ email: formData.get('email').trim() })
+      });
+      message.className = 'guest-message success';
+      message.textContent = result.message;
+    } catch (error) {
+      message.className = 'guest-message error';
+      message.textContent = error.message;
+    }
+  });
+
+  resetForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    validateResetPasswordConfirmation();
+    if (!resetForm.reportValidity()) return;
+    if (!resetToken) {
+      message.className = 'guest-message error';
+      message.textContent = 'This reset link is invalid or has expired. Request a new link.';
+      return;
+    }
+    message.className = 'guest-message';
+    message.textContent = 'Updating your password…';
+    try {
+      await apiRequest('/guest/password-reset/confirm', {
+        method: 'POST',
+        body: JSON.stringify({
+          token: resetToken,
+          password: resetPassword.value
+        })
+      });
+      resetToken = '';
+      resetForm.reset();
+      setMode('login');
+      message.className = 'guest-message success';
+      message.textContent = 'Password updated. You can now sign in.';
     } catch (error) {
       message.className = 'guest-message error';
       message.textContent = error.message;

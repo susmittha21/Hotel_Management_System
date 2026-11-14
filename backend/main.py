@@ -4,6 +4,9 @@ import hmac
 import logging
 import os
 import re
+import secrets
+import smtplib
+import ssl
 import threading
 import time
 import json
@@ -11,9 +14,11 @@ import urllib.error
 import urllib.request
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from email.message import EmailMessage
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -419,6 +424,17 @@ def _normalize_guest_email(value: str) -> str:
     return normalized
 
 
+def _validate_guest_password(value: str) -> str:
+    if (
+        len(value) < 10
+        or any(character.isspace() for character in value)
+        or not re.search(r"[A-Za-z]", value)
+        or not re.search(r"\d", value)
+    ):
+        raise ValueError("Password must contain at least 10 characters, a letter and a number, with no spaces.")
+    return value
+
+
 class GuestRegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -460,9 +476,7 @@ class GuestRegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, value: str) -> str:
-        if any(character.isspace() for character in value) or not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
-            raise ValueError("Password must contain a letter and a number, with no spaces.")
-        return value
+        return _validate_guest_password(value)
 
 
 class GuestLoginRequest(BaseModel):
@@ -475,6 +489,29 @@ class GuestLoginRequest(BaseModel):
     @classmethod
     def normalize_email(cls, value: str) -> str:
         return _normalize_guest_email(value)
+
+
+class GuestPasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=6, max_length=100)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return _normalize_guest_email(value)
+
+
+class GuestPasswordResetConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=32, max_length=200)
+    password: str = Field(min_length=10, max_length=200)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_guest_password(value)
 
 
 class GuestServiceRequest(BaseModel):
@@ -821,6 +858,101 @@ def _guest_password_hash(password: str, salt: bytes | None = None) -> str:
     return f"pbkdf2_sha256$310000${base64.urlsafe_b64encode(salt).decode('ascii')}${base64.urlsafe_b64encode(derived).decode('ascii')}"
 
 
+def _guest_password_reset_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _guest_password_reset_mail_settings() -> dict[str, Any]:
+    host = os.getenv("PMS_SMTP_HOST", "").strip()
+    sender = os.getenv("PMS_SMTP_FROM", "").strip()
+    username = os.getenv("PMS_SMTP_USERNAME", "").strip()
+    password = os.getenv("PMS_SMTP_PASSWORD", "")
+    try:
+        port = int(os.getenv("PMS_SMTP_PORT", "587"))
+    except ValueError:
+        raise RuntimeError("PMS_SMTP_PORT must be a valid port number.") from None
+
+    if not host or not sender:
+        raise RuntimeError("Configure PMS_SMTP_HOST and PMS_SMTP_FROM to enable guest password recovery.")
+    if not 1 <= port <= 65535:
+        raise RuntimeError("PMS_SMTP_PORT must be a valid port number.")
+    if bool(username) != bool(password):
+        raise RuntimeError("Configure both PMS_SMTP_USERNAME and PMS_SMTP_PASSWORD, or leave both empty.")
+
+    reset_page = os.getenv(
+        "PMS_GUEST_RESET_URL",
+        "http://localhost:3000/pages/guest-account.html",
+    ).strip()
+    try:
+        parsed_url = urlsplit(reset_page)
+        url_has_credentials = parsed_url.username is not None or parsed_url.password is not None
+    except ValueError:
+        raise RuntimeError("PMS_GUEST_RESET_URL must be an absolute HTTP or HTTPS guest-account page URL.") from None
+    if (
+        parsed_url.scheme not in {"http", "https"}
+        or not parsed_url.netloc
+        or url_has_credentials
+    ):
+        raise RuntimeError("PMS_GUEST_RESET_URL must be an absolute HTTP or HTTPS guest-account page URL.")
+
+    return {
+        "host": host,
+        "port": port,
+        "sender": sender,
+        "username": username or None,
+        "password": password or None,
+        "reset_page": reset_page,
+    }
+
+
+def _guest_password_reset_url(reset_page: str, token: str) -> str:
+    parsed_url = urlsplit(reset_page)
+    return urlunsplit(
+        (
+            parsed_url.scheme,
+            parsed_url.netloc,
+            parsed_url.path,
+            parsed_url.query,
+            urlencode({"reset_token": token}),
+        )
+    )
+
+
+def _send_guest_password_reset_email(
+    email: str,
+    token: str,
+    settings: dict[str, Any],
+) -> None:
+    reset_url = _guest_password_reset_url(settings["reset_page"], token)
+    message = EmailMessage()
+    message["Subject"] = "Reset your VS Plaza guest password"
+    message["From"] = settings["sender"]
+    message["To"] = email
+    message.set_content(
+        "We received a request to reset the password for your VS Plaza guest account.\n\n"
+        f"Use this link within 30 minutes to choose a new password:\n{reset_url}\n\n"
+        "If you did not request this, you can ignore this email."
+    )
+
+    if settings["port"] == 465:
+        with smtplib.SMTP_SSL(
+            settings["host"],
+            settings["port"],
+            timeout=10,
+            context=ssl.create_default_context(),
+        ) as server:
+            if settings["username"]:
+                server.login(settings["username"], settings["password"])
+            server.send_message(message)
+        return
+
+    with smtplib.SMTP(settings["host"], settings["port"], timeout=10) as server:
+        server.starttls(context=ssl.create_default_context())
+        if settings["username"]:
+            server.login(settings["username"], settings["password"])
+        server.send_message(message)
+
+
 def _verify_guest_password(password: str, stored_hash: str) -> bool:
     try:
         algorithm, rounds, salt_text, expected_text = stored_hash.split("$", 3)
@@ -932,6 +1064,147 @@ def login_guest(credentials: GuestLoginRequest, request: Request, response: Resp
     except (SQLAlchemyError, RuntimeError, ValueError):
         logger.exception("Unable to sign in guest")
         raise HTTPException(status_code=503, detail="Unable to sign in right now.") from None
+
+
+@app.post("/api/guest/password-reset/request")
+def request_guest_password_reset(payload: GuestPasswordResetRequest, request: Request):
+    _verify_origin(request)
+    try:
+        mail_settings = _guest_password_reset_mail_settings()
+    except RuntimeError as error:
+        logger.error("Guest password recovery is not configured: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail="Password recovery is not available. Please contact the hotel.",
+        ) from None
+
+    reset_token = secrets.token_urlsafe(32)
+    token_hash = _guest_password_reset_token_hash(reset_token)
+    should_send = False
+    try:
+        schema = database_settings()["schema"]
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                account = connection.execute(
+                    text(
+                        f'SELECT guest_id FROM "{schema}".guest_account '
+                        "WHERE email_normalized=:email FOR UPDATE"
+                    ),
+                    {"email": payload.email},
+                ).mappings().one_or_none()
+                if account:
+                    recently_requested = connection.execute(
+                        text(
+                            f'SELECT EXISTS (SELECT 1 FROM "{schema}".guest_password_reset '
+                            "WHERE guest_id=:guest_id "
+                            "AND created_at > CURRENT_TIMESTAMP - INTERVAL '1 minute')"
+                        ),
+                        {"guest_id": account["guest_id"]},
+                    ).scalar_one()
+                    if not recently_requested:
+                        connection.execute(
+                            text(
+                                f'DELETE FROM "{schema}".guest_password_reset '
+                                "WHERE expires_at <= CURRENT_TIMESTAMP"
+                            )
+                        )
+                        connection.execute(
+                            text(
+                                f'INSERT INTO "{schema}".guest_password_reset '
+                                "(token_hash, guest_id, expires_at) "
+                                "VALUES (:token_hash, :guest_id, CURRENT_TIMESTAMP + INTERVAL '30 minutes')"
+                            ),
+                            {
+                                "token_hash": token_hash,
+                                "guest_id": account["guest_id"],
+                            },
+                        )
+                        should_send = True
+
+        if should_send:
+            try:
+                _send_guest_password_reset_email(payload.email, reset_token, mail_settings)
+            except (OSError, RuntimeError, ValueError, smtplib.SMTPException):
+                try:
+                    with get_engine().begin() as connection:
+                        connection.execute(
+                            text(
+                                f'DELETE FROM "{schema}".guest_password_reset '
+                                "WHERE token_hash=:token_hash"
+                            ),
+                            {"token_hash": token_hash},
+                        )
+                except SQLAlchemyError:
+                    logger.exception("Unable to remove the unsent guest password reset token")
+                logger.exception("Unable to send guest password reset email")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Unable to send a password reset email. Please try again later.",
+                ) from None
+
+        return {
+            "message": "If an account exists for that email, a password reset link has been sent."
+        }
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to process guest password reset request")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to process the password reset request right now.",
+        ) from None
+
+
+@app.post("/api/guest/password-reset/confirm")
+def confirm_guest_password_reset(
+    payload: GuestPasswordResetConfirmRequest,
+    request: Request,
+):
+    _verify_origin(request)
+    try:
+        schema = database_settings()["schema"]
+        token_hash = _guest_password_reset_token_hash(payload.token)
+        with _database_sync_lock:
+            ensure_database_schema(schema)
+            with get_engine().begin() as connection:
+                reset = connection.execute(
+                    text(
+                        f'SELECT guest_id FROM "{schema}".guest_password_reset '
+                        "WHERE token_hash=:token_hash AND expires_at > CURRENT_TIMESTAMP FOR UPDATE"
+                    ),
+                    {"token_hash": token_hash},
+                ).scalar_one_or_none()
+                if reset is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="This password reset link is invalid or has expired. Request a new link.",
+                    )
+                connection.execute(
+                    text(
+                        f'UPDATE "{schema}".guest_account SET password_hash=:password_hash '
+                        "WHERE guest_id=:guest_id"
+                    ),
+                    {
+                        "password_hash": _guest_password_hash(payload.password),
+                        "guest_id": reset,
+                    },
+                )
+                connection.execute(
+                    text(
+                        f'DELETE FROM "{schema}".guest_password_reset WHERE guest_id=:guest_id'
+                    ),
+                    {"guest_id": reset},
+                )
+        return {"passwordReset": True}
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, RuntimeError, ValueError):
+        logger.exception("Unable to reset guest password")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to reset your password right now.",
+        ) from None
 
 
 @app.get("/api/guest/account")

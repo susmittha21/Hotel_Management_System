@@ -20,7 +20,7 @@
     <section class="guest-card guest-account-card">
       <h1>Welcome to VS Plaza</h1>
       <p class="guest-muted">Sign in or create an account to book rooms and manage your hotel service requests.</p>
-      <div class="guest-auth-toggle">
+      <div id="guestAuthToggle" class="guest-auth-toggle">
         <button id="guestLoginTab" class="btn btn-primary" type="button">Sign In</button>
         <button id="guestRegisterTab" class="btn btn-secondary" type="button">Create Account</button>
       </div>
@@ -40,6 +40,7 @@
           </div>
         </div>
         <button class="btn btn-primary" type="submit">Sign In</button>
+        <button id="guestForgotPasswordButton" class="guest-forgot-link" type="button">Forgot password?</button>
       </form>
 
       <form id="guestRegisterForm" hidden>
@@ -67,6 +68,46 @@
         </div>
         <button class="btn btn-primary" type="submit">Create Account</button>
       </form>
+
+      <section id="guestForgotPanel" hidden aria-labelledby="guestForgotHeading">
+        <h2 id="guestForgotHeading">Reset your password</h2>
+        <p class="guest-muted">Enter the email address for your guest account. If an account exists, we’ll send a reset link.</p>
+        <form id="guestForgotForm">
+          <div class="form-group">
+            <label class="form-label" for="guestForgotEmail">Email</label>
+            <input class="form-control" id="guestForgotEmail" name="email" type="email" maxlength="100" autocomplete="email" required>
+          </div>
+          <button class="btn btn-primary" type="submit">Send reset link</button>
+          <button id="guestBackFromForgot" class="btn btn-secondary" type="button">Back to sign in</button>
+        </form>
+      </section>
+
+      <section id="guestResetPanel" hidden aria-labelledby="guestResetHeading">
+        <h2 id="guestResetHeading">Choose a new password</h2>
+        <form id="guestResetForm">
+          <div class="form-group">
+            <label class="form-label" for="guestResetPassword">New password</label>
+            <div class="password-input-wrap">
+              <input class="form-control" id="guestResetPassword" name="password" type="password" minlength="10" maxlength="200" autocomplete="new-password" required>
+              <button class="password-visibility-toggle" type="button" data-password-toggle="guestResetPassword" aria-label="Show password" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <small class="guest-muted">At least 10 characters, including a letter and a number; no spaces.</small>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="guestResetPasswordConfirm">Confirm new password</label>
+            <div class="password-input-wrap">
+              <input class="form-control" id="guestResetPasswordConfirm" name="passwordConfirm" type="password" minlength="10" maxlength="200" autocomplete="new-password" required>
+              <button class="password-visibility-toggle" type="button" data-password-toggle="guestResetPasswordConfirm" aria-label="Show password" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7S18.4 19 12 19 2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+          </div>
+          <button class="btn btn-primary" type="submit">Update password</button>
+          <button id="guestBackFromReset" class="btn btn-secondary" type="button">Back to sign in</button>
+        </form>
+      </section>
       <p id="guestAccountMessage" class="guest-message" role="status" aria-live="polite"></p>
     </section>
   </main>

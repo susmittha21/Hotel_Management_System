@@ -71,6 +71,16 @@ def ensure_extension_tables(connection: Connection, schema: str) -> None:
         )
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS "{schema}".guest_password_reset (
+            token_hash CHAR(64) PRIMARY KEY,
+            guest_id VARCHAR(20) NOT NULL REFERENCES "{schema}".guest_account(guest_id) ON DELETE CASCADE,
+            expires_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        f'CREATE INDEX IF NOT EXISTS guest_password_reset_guest_created_idx '
+        f'ON "{schema}".guest_password_reset (guest_id, created_at DESC)',
+        f"""
         CREATE TABLE IF NOT EXISTS "{schema}".service_request (
             request_id VARCHAR(40) PRIMARY KEY,
             guest_id VARCHAR(20) NOT NULL REFERENCES "{schema}".guest(guest_id) ON DELETE CASCADE,

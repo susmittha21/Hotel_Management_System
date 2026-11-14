@@ -563,6 +563,23 @@
   min-width: 140px;
 }
 
+.guest-forgot-link {
+  display: block;
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2c5282;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.guest-forgot-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
 .guest-account-card .guest-muted {
   display: block;
   margin-top: 5px;

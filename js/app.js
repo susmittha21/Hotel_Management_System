@@ -166,24 +166,6 @@ function formatApiError(detail) {
   return '';
 }
 
-// Automatic cleanup of legacy demo records so database integration starts clean
-(function purgeLegacyDemoData() {
-  try {
-    const g = localStorage.getItem(STORAGE_KEYS.GUESTS);
-    const b = localStorage.getItem(STORAGE_KEYS.BOOKINGS);
-    const r = localStorage.getItem(STORAGE_KEYS.ROOMS);
-    if (g && (g.includes('Aarav') || g.includes('P8923411'))) {
-      localStorage.setItem(STORAGE_KEYS.GUESTS, JSON.stringify([]));
-    }
-    if (b && (b.includes('B-1081') || b.includes('Aarav'))) {
-      localStorage.setItem(STORAGE_KEYS.BOOKINGS, JSON.stringify([]));
-    }
-    if (r && (r.includes('King Bed, City View') || r.includes('Aarav Kumar'))) {
-      localStorage.setItem(STORAGE_KEYS.ROOMS, JSON.stringify([]));
-    }
-  } catch (e) {}
-})();
-
 // Data Store Accessors
 const HotelStore = {
   _databaseReady: null,
@@ -194,39 +176,20 @@ const HotelStore = {
         .then(async data => {
           const currentUser = await apiRequest('/auth/me');
           const canManageServices = currentUser.role === 'Hotel Manager';
-          const legacyRecords = {};
           Object.entries(DATA_COLLECTIONS).forEach(([storageKey, collection]) => {
             if (!Object.hasOwn(data, collection)) return;
-            let existingRecords = [];
-            try {
-              const cached = JSON.parse(localStorage.getItem(storageKey) || '[]');
-              if (Array.isArray(cached)) existingRecords = cached;
-            } catch (error) {
-              console.warn(`Ignoring invalid local cache for ${collection}.`, error);
-            }
-            const databaseRecords = data[collection] || [];
-            const records = ['invoices', 'rooms', 'bookings', 'service_requests'].includes(collection) ||
-              collection === 'services' && !canManageServices
-              ? databaseRecords
-              : databaseRecords.length ? databaseRecords : existingRecords;
+            const records = Array.isArray(data[collection]) ? data[collection] : [];
             localStorage.setItem(storageKey, JSON.stringify(records));
-            if (!['invoices', 'rooms', 'bookings', 'service_requests'].includes(collection) &&
-                (collection !== 'services' || canManageServices) &&
-                !databaseRecords.length && existingRecords.length) {
-              legacyRecords[collection] = { storageKey, records };
-            }
           });
-          const migrations = Object.entries(legacyRecords).map(([collection, dataSet]) =>
-            saveCollectionToDatabase(dataSet.storageKey, collection, dataSet.records)
-          );
+          const migrations = [];
           if (Object.hasOwn(data, 'departments') && data.departments.length === 0) {
-            if (!legacyRecords.departments) migrations.push(this.saveDepartments(DEFAULT_DEPARTMENTS));
+            migrations.push(this.saveDepartments(DEFAULT_DEPARTMENTS));
           }
           if (Object.hasOwn(data, 'food_menu') && data.food_menu.length === 0) {
-            if (!legacyRecords.food_menu) migrations.push(this.saveFoodMenu(DEFAULT_FOOD_MENU));
+            migrations.push(this.saveFoodMenu(DEFAULT_FOOD_MENU));
           }
           if (canManageServices && Object.hasOwn(data, 'services') && data.services.length === 0) {
-            if (!legacyRecords.services) migrations.push(this.saveServices(DEFAULT_SERVICES));
+            migrations.push(this.saveServices(DEFAULT_SERVICES));
           }
           const saves = await Promise.all(migrations);
           if (saves.includes(false)) {

@@ -31,16 +31,19 @@ def replace_documents(
     id_field: str,
     records: list[dict[str, Any]],
 ) -> None:
-    collection.create_index(id_field, unique=True)
     operations = [
-        ReplaceOne({id_field: record[id_field]}, record, upsert=True)
+        ReplaceOne(
+            {"_id": record[id_field]},
+            {**record, "_id": record[id_field]},
+            upsert=True,
+        )
         for record in records
     ]
     if operations:
         collection.bulk_write(operations, ordered=True)
 
     retained_ids = [record[id_field] for record in records]
-    collection.delete_many({id_field: {"$nin": retained_ids}})
+    collection.delete_many({"_id": {"$nin": retained_ids}})
 
 
 def synchronize_collections(
